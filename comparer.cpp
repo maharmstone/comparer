@@ -146,12 +146,24 @@ static void do_compare(unsigned int num) {
 	run_sql("INSERT INTO Comparer.log(query, success, rows1, rows2, changed_rows, added_rows, removed_rows) VALUES(?, 1, ?, ?, ?, ?, ?)", num, rows1, rows2, changed_rows, added_rows, removed_rows);
 }
 
-int main() {
-	unsigned int num = 1; // FIXME
+int main(int argc, char* argv[]) {
+	unsigned int num; 
 
-	db_connect();
+	if (argc < 2) {
+		cerr << "Usage: comparer.exe query_number" << endl;
+		return 1;
+	}
 
 	try {
+		db_connect();
+	} catch (const exception& e) {
+		cerr << "Exception: " << e.what() << endl;
+		return 1;
+	}
+
+	try {
+		num = stoul(argv[1]);
+
 		do_compare(num);
 	} catch (const exception& e) {
 		cerr << "Exception: " << e.what() << endl;
