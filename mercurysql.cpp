@@ -232,7 +232,7 @@ void SQLField::reinit(SQLHStmt& hstmt, unsigned int i) {
 
 		if (len == SQL_NULL_DATA)
 			null = true;
-	} else if (datatype == SQL_BINARY || datatype == SQL_VARBINARY || datatype == SQL_LONGVARBINARY || datatype == SQL_VARCHAR) {
+	} else if (datatype == SQL_BINARY || datatype == SQL_VARBINARY || datatype == SQL_LONGVARBINARY || datatype == SQL_VARCHAR || datatype == SQL_CHAR) {
 		SQLRETURN rc;
 
 		str = "";
@@ -373,7 +373,7 @@ bool SQLQuery::fetch_row() {
 		unsigned int numcols = hstmt.SQLNumResultCols();  
 
 		for (unsigned int i = 0; i < numcols; i++) {
-			cols.push_back(SQLField(hstmt, i, !b));
+			cols.emplace_back(hstmt, i, !b);
 		}
 	} else if (b) {
 		for (unsigned int i = 0; i < cols.size(); i++) {

@@ -35,11 +35,101 @@ void db_connect() {
 	}
 }
 
+static void do_compare(unsigned int num) {
+	string q1, q2;
+	bool b1, b2;
+
+	{
+		SQL(sq, "SELECT query1, query2 FROM Comparer.queries WHERE id=?", num);
+
+		if (!sq.fetch_row())
+			throw runtime_error("Unable to find entry in Comparer.queries");
+
+		q1 = sq.cols[0];
+		q2 = sq.cols[1];
+	}
+
+	{
+		run_sql("DELETE FROM Comparer.results WHERE query=?", num);
+	}
+
+	SQL(sq1, q1);
+	SQL(sq2, q2);
+
+	b1 = sq1.fetch_row();
+	b2 = sq2.fetch_row();
+
+	while (b1 || b2) {
+		if (b1 && b2) {
+			string pk1 = sq1.cols[0], pk2 = sq2.cols[0];
+
+			if (pk1 == pk2) {
+				for (unsigned int i = 1; i < sq1.cols.size(); i++) {
+					if (sq1.cols[i].null && !sq2.cols[i].null) {
+						run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, NULL, ?)", num, pk1, "modified", i + 1, (string)sq2.cols[i]);
+					} else if (!sq1.cols[i].null && sq2.cols[i].null) {
+						run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, ?, NULL)", num, pk1, "modified", i + 1, (string)sq1.cols[i]);
+					} else if ((string)sq1.cols[i] != (string)sq2.cols[i]) {
+						run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, ?, ?)", num, pk1, "modified", i + 1, (string)sq1.cols[i], (string)sq2.cols[i]);
+					}
+				}
+
+				b1 = sq1.fetch_row();
+				b2 = sq2.fetch_row();
+			} else if (pk1 < pk2) {
+				for (unsigned int i = 1; i < sq1.cols.size(); i++) {
+					if (sq1.cols[i].null) {
+						run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, NULL, NULL)", num, pk1, "removed", i + 1);
+					} else {
+						run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, ?, NULL)", num, pk1, "removed", i + 1, (string)sq1.cols[i]);
+					}
+				}
+
+				b1 = sq1.fetch_row();
+			} else {
+				for (unsigned int i = 1; i < sq2.cols.size(); i++) {
+					if (sq2.cols[i].null) {
+						run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, NULL, NULL)", num, pk2, "added", i + 1);
+					} else {
+						run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, ?, NULL)", num, pk2, "added", i + 1, (string)sq2.cols[i]);
+					}
+				}
+
+				b2 = sq2.fetch_row();
+			}
+		} else if (b1) {
+			string pk1 = sq1.cols[0];
+
+			for (unsigned int i = 1; i < sq1.cols.size(); i++) {
+				if (sq1.cols[i].null) {
+					run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, NULL, NULL)", num, pk1, "removed", i + 1);
+				} else {
+					run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, ?, NULL)", num, pk1, "removed", i + 1, (string)sq1.cols[i]);
+				}
+			}
+
+			b1 = sq1.fetch_row();
+		} else {
+			string pk2 = sq2.cols[0];
+
+			for (unsigned int i = 1; i < sq2.cols.size(); i++) {
+				if (sq2.cols[i].null) {
+					run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, NULL, NULL)", num, pk2, "added", i + 1);
+				} else {
+					run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, ?, NULL)", num, pk2, "added", i + 1, (string)sq2.cols[i]);
+				}
+			}
+
+			b2 = sq2.fetch_row();
+		}
+	}
+}
+
 int main() {
 	try {
 		db_connect();
 
-		// FIXME
+		do_compare(1);
 	} catch (const exception& e) {
 		cerr << "Exception: " << e.what() << endl;
 		return 1;

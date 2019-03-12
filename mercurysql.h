@@ -42,8 +42,6 @@ private:
 	HSTMT hstmt = NULL;
 };
 
-class json;
-
 template<class T>
 class nullable {
 public:
@@ -74,17 +72,6 @@ public:
 
 	/*bool operator==(const char* s) const {
 		return operator string() == s;
-	}
-
-	NullableString& NullableString::operator=(const json& j) {
-		if (j.type == json_class_type::null)
-			null = true;
-		else {
-			null = false;
-			s = j;
-		}
-
-		return *this;
 	}*/
 
 	bool is_null() const {
@@ -147,6 +134,10 @@ protected:
 	}
 
 	void add_params2(unsigned int i, unsigned int t) {
+		add_params2(i, (signed long long)t);
+	}
+
+	void add_params2(unsigned int i, int t) {
 		add_params2(i, (signed long long)t);
 	}
 
@@ -220,8 +211,6 @@ protected:
 
 		hstmt.SQLBindParameter(i + 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, sizeof(t), 0, (SQLPOINTER)buf, sizeof(t), nullptr);
 	}
-
-	void add_params2(unsigned int, const json& j);
 
 	template<typename T>
 	void add_params(unsigned int i, T t) {
