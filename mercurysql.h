@@ -2,8 +2,11 @@
 
 #include <string>
 #include <vector>
+#include <list>
+#include <forward_list>
 #include <Windows.h>
 #include <sqlext.h>
+#include <odbcss.h>
 
 using namespace std;
 
@@ -73,6 +76,10 @@ public:
 	/*bool operator==(const char* s) const {
 		return operator string() == s;
 	}*/
+
+	const T* operator->() const {
+		return &t;
+	}
 
 	bool is_null() const {
 		return null;
@@ -318,3 +325,4 @@ void _throw_sql_error(const string& funcname, SQLSMALLINT handle_type, SQLHANDLE
 
 void SQLInsert(const string& tablename, const vector<string>& np, const vector<vector<nullable<string>>>& vp, const char* func, const char* file, unsigned int line);
 
+void SQLInsert_Batch(const string& db, const string& tablename, const vector<string>& np, const forward_list<list<nullable<string>>>& vp);

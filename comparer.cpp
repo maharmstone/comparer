@@ -1,6 +1,7 @@
 #include "mercurysql.h"
 #include <iostream>
 #include <string>
+#include <list>
 
 using namespace std;
 
@@ -21,6 +22,11 @@ void db_connect() {
 	SQLAllocConnect(henv, &hdbc);
 
 	try {
+		rc = SQLSetConnectAttr(hdbc, SQL_COPT_SS_BCP, (void*)SQL_BCP_ON, SQL_IS_INTEGER);
+
+		if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO)
+			throw_sql_error("SQLSetConnectAttr", SQL_HANDLE_DBC, hdbc);
+
 		rc = SQLDriverConnectA(hdbc, NULL, (unsigned char*)CONNEXION_STRING.c_str(), (SQLSMALLINT)CONNEXION_STRING.length(), NULL, 0, NULL, SQL_DRIVER_NOPROMPT);
 
 		if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO)
@@ -35,10 +41,24 @@ void db_connect() {
 	}
 }
 
+class result {
+public:
+	result(int query, const string& primary_key, const string& change, unsigned int col, nullable<string> value1, nullable<string> value2) :
+		query(query), primary_key(primary_key), change(change), col(col), value1(value1), value2(value2) {
+	}
+
+	int query;
+	string primary_key;
+	string change;
+	unsigned int col;
+	nullable<string> value1, value2;
+};
+
 static void do_compare(unsigned int num) {
 	string q1, q2;
 	bool b1, b2;
 	unsigned int rows1 = 0, rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0;
+	list<result> res;
 
 	{
 		SQL(sq, "SELECT query1, query2 FROM Comparer.queries WHERE id=?", num);
@@ -69,13 +89,13 @@ static void do_compare(unsigned int num) {
 
 				for (unsigned int i = 1; i < sq1.cols.size(); i++) {
 					if (sq1.cols[i].null && !sq2.cols[i].null) {
-						run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, NULL, ?)", num, pk1, "modified", i + 1, (string)sq2.cols[i]);
+						res.emplace_back(num, pk1, "modified", i + 1, nullptr, (string)sq2.cols[i]);
 						changed = true;
 					} else if (!sq1.cols[i].null && sq2.cols[i].null) {
-						run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, ?, NULL)", num, pk1, "modified", i + 1, (string)sq1.cols[i]);
+						res.emplace_back(num, pk1, "modified", i + 1, (string)sq1.cols[i], nullptr);
 						changed = true;
 					} else if ((string)sq1.cols[i] != (string)sq2.cols[i]) {
-						run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, ?, ?)", num, pk1, "modified", i + 1, (string)sq1.cols[i], (string)sq2.cols[i]);
+						res.emplace_back(num, pk1, "modified", i + 1, (string)sq1.cols[i], (string)sq2.cols[i]);
 						changed = true;
 					}
 				}
@@ -89,11 +109,10 @@ static void do_compare(unsigned int num) {
 				b2 = sq2.fetch_row();
 			} else if (pk1 < pk2) {
 				for (unsigned int i = 1; i < sq1.cols.size(); i++) {
-					if (sq1.cols[i].null) {
-						run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, NULL, NULL)", num, pk1, "removed", i + 1);
-					} else {
-						run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, ?, NULL)", num, pk1, "removed", i + 1, (string)sq1.cols[i]);
-					}
+					if (sq1.cols[i].null)
+						res.emplace_back(num, pk1, "removed", i + 1, nullptr, nullptr);
+					else
+						res.emplace_back(num, pk1, "removed", i + 1, (string)sq1.cols[i], nullptr);
 				}
 
 				removed_rows++;
@@ -101,11 +120,10 @@ static void do_compare(unsigned int num) {
 				b1 = sq1.fetch_row();
 			} else {
 				for (unsigned int i = 1; i < sq2.cols.size(); i++) {
-					if (sq2.cols[i].null) {
-						run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, NULL, NULL)", num, pk2, "added", i + 1);
-					} else {
-						run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, ?, NULL)", num, pk2, "added", i + 1, (string)sq2.cols[i]);
-					}
+					if (sq2.cols[i].null)
+						res.emplace_back(num, pk2, "added", i + 1, nullptr, nullptr);
+					else
+						res.emplace_back(num, pk2, "added", i + 1, nullptr, (string)sq2.cols[i]);
 				}
 
 				added_rows++;
@@ -116,11 +134,10 @@ static void do_compare(unsigned int num) {
 			string pk1 = sq1.cols[0];
 
 			for (unsigned int i = 1; i < sq1.cols.size(); i++) {
-				if (sq1.cols[i].null) {
-					run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, NULL, NULL)", num, pk1, "removed", i + 1);
-				} else {
-					run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, ?, NULL)", num, pk1, "removed", i + 1, (string)sq1.cols[i]);
-				}
+				if (sq1.cols[i].null)
+					res.emplace_back(num, pk1, "removed", i + 1, nullptr, nullptr);
+				else
+					res.emplace_back(num, pk1, "removed", i + 1, (string)sq1.cols[i], nullptr);
 			}
 
 			removed_rows++;
@@ -130,17 +147,26 @@ static void do_compare(unsigned int num) {
 			string pk2 = sq2.cols[0];
 
 			for (unsigned int i = 1; i < sq2.cols.size(); i++) {
-				if (sq2.cols[i].null) {
-					run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, NULL, NULL)", num, pk2, "added", i + 1);
-				} else {
-					run_sql("INSERT INTO Comparer.results(query, primary_key, change, col, value1, value2) VALUES(?, ?, ?, ?, ?, NULL)", num, pk2, "added", i + 1, (string)sq2.cols[i]);
-				}
+				if (sq2.cols[i].null)
+					res.emplace_back(num, pk2, "added", i + 1, nullptr, nullptr);
+				else
+					res.emplace_back(num, pk2, "added", i + 1, nullptr, (string)sq2.cols[i]);
 			}
 
 			added_rows++;
 			rows2++;
 			b2 = sq2.fetch_row();
 		}
+	}
+
+	if (!res.empty()) {
+		forward_list<list<nullable<string>>> v;
+
+		for (const auto& r : res) {
+			v.emplace_front(list<nullable<string>>{to_string(r.query), r.primary_key, r.change, to_string(r.col), r.value1, r.value2});
+		}
+
+		SQLInsert_Batch("", "Comparer.results", { "query", "primary_key", "change", "col", "value1", "value2" }, v);
 	}
 
 	run_sql("INSERT INTO Comparer.log(query, success, rows1, rows2, changed_rows, added_rows, removed_rows) VALUES(?, 1, ?, ?, ?, ?, ?)", num, rows1, rows2, changed_rows, added_rows, removed_rows);

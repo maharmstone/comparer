@@ -204,7 +204,7 @@ SQLRETURN SQLHStmt::SQLSetStmtAttr(SQLINTEGER fAttribute, const string& s) {
 }
 
 void SQLField::reinit(SQLHStmt& hstmt, unsigned int i) {
-	SQLINTEGER len;
+	SQLLEN len;
 
 	null = false;
 
@@ -263,7 +263,7 @@ void SQLField::reinit(SQLHStmt& hstmt, unsigned int i) {
 
 SQLField::SQLField(SQLHStmt& hstmt, unsigned int i, bool no_results) {
 	SQLSMALLINT namelen;
-	SQLUINTEGER colsize;
+	SQLULEN colsize;
 
 	hstmt.SQLDescribeCol(i + 1, NULL, 0, &namelen, &datatype, &colsize, &digits, &nullable);
 
@@ -389,7 +389,7 @@ unsigned int SQLQuery::num_cols() {
 
 string SQLQuery::col_name(unsigned int i) {
 	SQLSMALLINT namelen, datatype, digits, nullable;
-	SQLUINTEGER colsize;
+	SQLULEN colsize;
 
 	hstmt.SQLDescribeCol(i + 1, NULL, 0, &namelen, &datatype, &colsize, &digits, &nullable);
 
@@ -405,7 +405,7 @@ string SQLQuery::col_name(unsigned int i) {
 
 SQLSMALLINT SQLQuery::col_type(unsigned int i) {
 	SQLSMALLINT namelen, datatype, digits, nullable;
-	SQLUINTEGER colsize;
+	SQLULEN colsize;
 
 	hstmt.SQLDescribeCol(i + 1, NULL, 0, &namelen, &datatype, &colsize, &digits, &nullable);
 
@@ -526,4 +526,113 @@ void sql_transaction::commit() {
 		throw_sql_error("SQLEndTran", SQL_HANDLE_DBC, hdbc);
 
 	committed = true;
+}
+
+void SQLInsert_Batch(const string& db, const string& tablename, const vector<string>& np, const forward_list<list<nullable<string>>>& vp) {
+	string table, schema;
+	SQLRETURN rc;
+	size_t dot;
+	vector<unsigned int> maxlen(np.size());
+	vector<bool> nullables(np.size());
+	long long zero = 0;
+	DBDATETIME epoch = { 0, 0 };
+
+	dot = tablename.find(".");
+	if (dot != string::npos) {
+		schema = tablename.substr(0, dot);
+		table = tablename.substr(dot + 1);
+	} else
+		table = tablename;
+
+	bool first = true;
+	for (const auto& v : vp) {
+		unsigned int i = 0;
+
+		for (const auto& v2 : v) {
+			if (first || v2->length() > maxlen[i])
+				maxlen[i] = v2->length();
+
+			i++;
+		}
+
+		first = false;
+	}
+
+	vector<string> strings(np.size());
+	for (unsigned int i = 0; i < np.size(); i++) {
+		strings[i] = string(maxlen[i] + 8, ' ');
+	}
+
+	string fullname = (db != "" ? (db + ".") : "") + tablename;
+
+	rc = bcp_initA(hdbc, fullname.c_str(), NULL, NULL, DB_IN);
+	if (rc != SUCCEED)
+		throw_sql_error("bcp_init", SQL_HANDLE_DBC, hdbc);
+
+	{
+		SQL(sq, "SELECT ORDINAL_POSITION, COLUMN_NAME, IS_NULLABLE, DATA_TYPE FROM " + (db != "" ? (db + ".") : "") + "INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION", schema, table);
+
+		if (!sq.fetch_row())
+			throw runtime_error("Table " + tablename + " not found.");
+
+		do {
+			unsigned int pos = sq.cols[0];
+			string name = sq.cols[1];
+			bool nullable = string(sq.cols[2]) == "YES";
+			string type = sq.cols[3];
+			unsigned int num = 0;
+			bool found = false;
+
+			for (unsigned int i = 0; i < np.size(); i++) {
+				if (np[i] == name) {
+					num = i;
+					found = true;
+					break;
+				}
+			}
+
+			if (found) {
+				rc = bcp_bind(hdbc, (LPCBYTE)strings[num].c_str(), 8, SQL_VARLEN_DATA, NULL, 0, SQLTEXT, pos);
+				if (rc != SUCCEED)
+					throw_sql_error("bcp_bind", SQL_HANDLE_DBC, hdbc);
+
+				nullables[num] = nullable;
+			} else if (type == "int") {
+				rc = bcp_bind(hdbc, (LPCBYTE)&zero, 0, nullable ? SQL_NULL_DATA : 8, NULL, 0, SQLINT8, pos);
+				if (rc != SUCCEED)
+					throw_sql_error("bcp_bind", SQL_HANDLE_DBC, hdbc);
+			} else if (type == "date") {
+				rc = bcp_bind(hdbc, (LPCBYTE)&epoch, 0, nullable ? SQL_NULL_DATA : sizeof(epoch), NULL, 0, SQLDATETIMN, pos);
+				if (rc != SUCCEED)
+					throw_sql_error("bcp_bind", SQL_HANDLE_DBC, hdbc);
+			} else {
+				rc = bcp_bind(hdbc, (LPCBYTE)"", 0, nullable ? SQL_NULL_DATA : 1, NULL, 0, SQLTEXT, pos);
+				if (rc != SUCCEED)
+					throw_sql_error("bcp_bind", SQL_HANDLE_DBC, hdbc);
+			}
+		} while (sq.fetch_row());
+	}
+
+	for (const auto& v : vp) {
+		unsigned int i = 0;
+		for (const auto& v2 : v) {
+			long long* ind = (long long*)strings[i].c_str();
+
+			if (v2.is_null() && nullables[i])
+				*ind = SQL_NULL_DATA;
+			else {
+				*ind = v2->length();
+
+				memcpy((char*)strings[i].c_str() + 8, v2->c_str(), *ind);
+			}
+
+			i++;
+		}
+
+		rc = bcp_sendrow(hdbc);
+		if (rc != SUCCEED)
+			throw_sql_error("bcp_sendrow", SQL_HANDLE_DBC, hdbc);
+	}
+
+	bcp_done(hdbc);
 }
