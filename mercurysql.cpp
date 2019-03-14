@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <Windows.h>
 #include "mercurysql.h"
 
@@ -37,17 +39,6 @@ string utf16_to_utf8(const wstring& ws) {
 	s = string(len, ' ');
 
 	WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), ws.length(), (char*)s.c_str(), len, NULL, NULL);
-
-	return s;
-}
-
-static string zero_pad(unsigned int i, unsigned int l) {
-	string s;
-
-	s = to_string(i);
-
-	while (s.length() < 2)
-		s = "0" + s;
 
 	return s;
 }
@@ -298,11 +289,19 @@ SQLField::operator string() const {
 
 	if (datatype == SQL_INTEGER || datatype == SQL_BIT || datatype == SQL_NUMERIC || datatype == SQL_BIGINT)
 		return to_string(val);
-	else if (datatype == SQL_TIMESTAMP)
-		return zero_pad(ts.year, 4) + "-" + zero_pad(ts.month, 2) + "-" + zero_pad(ts.day, 2) + " " + zero_pad(ts.hour, 2) + ":" + zero_pad(ts.minute, 2) + ":" + zero_pad(ts.second, 2);
-	else if (datatype == SQL_DATE)
-		return zero_pad(ts.year, 4) + "-" + zero_pad(ts.month, 2) + "-" + zero_pad(ts.day, 2);
-	else if (datatype == SQL_FLOAT || datatype == SQL_DOUBLE)
+	else if (datatype == SQL_TIMESTAMP) {
+		char s[20];
+
+		sprintf(s, "%04u-%02u-%02u %02u:%02u:%02u", ts.year, ts.month, ts.day, ts.hour, ts.minute, ts.second);
+
+		return s;
+	} else if (datatype == SQL_DATE) {
+		char s[11];
+
+		sprintf(s, "%04u-%02u-%02u", ts.year, ts.month, ts.day);
+
+		return s;
+	} else if (datatype == SQL_FLOAT || datatype == SQL_DOUBLE)
 		return to_string(d);
 	else
 		return str;
