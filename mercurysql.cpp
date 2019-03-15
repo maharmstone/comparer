@@ -620,7 +620,10 @@ void SQLInsert_Batch(const string& db, const string& tablename, const vector<str
 
 			if (v2.is_null() && nullables[i])
 				*ind = SQL_NULL_DATA;
-			else {
+			else if (v2->length() == 0) {
+				*ind = 1;
+				strings[i][8] = 0;
+			} else {
 				*ind = v2->length();
 
 				memcpy((char*)strings[i].c_str() + 8, v2->c_str(), *ind);
