@@ -18,12 +18,15 @@
     <ClCompile Include="comparer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="mercurysql.cpp">
+    <ClCompile Include="tds.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="mercurysql.h">
+    <ClInclude Include="tds.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="nullable.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
