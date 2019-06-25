@@ -144,11 +144,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="comparer.cpp" />
-    <ClCompile Include="tds.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="nullable.h" />
-    <ClInclude Include="tds.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
