@@ -133,6 +133,19 @@ static void do_compare(unsigned int num) {
 				rows2++;
 				b2 = sq2.fetch_row();
 			}
+
+			if (res.size() > 10000) { // flush
+				vector<vector<optional<string>>> v;
+
+				for (const auto& r : res) {
+					v.emplace_back(vector<optional<string>>{to_string(r.query), r.primary_key, r.change, to_string(r.col), r.value1, r.value2});
+				}
+
+				tds::Conn tds3(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_APP);
+				tds3.bcp("Comparer.results", { "query", "primary_key", "change", "col", "value1", "value2" }, v);
+
+				res.clear();
+			}
 		}
 	}
 
