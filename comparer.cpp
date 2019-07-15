@@ -41,7 +41,21 @@ static void do_compare(unsigned int num) {
 		q2 = sq[1];
 	}
 
-	tds.run("DELETE FROM Comparer.results WHERE query=?", num);
+	tds.run(R"(
+WHILE 1 = 1
+BEGIN
+	BEGIN TRANSACTION;
+
+	DELETE TOP (100000)
+	FROM Comparer.results
+	WHERE query=?;
+
+	COMMIT;
+
+	IF (SELECT COUNT(*) FROM Comparer.results WHERE query=?) = 0
+		BREAK;
+END
+)", num, num);
 
 	{
 		tds::Query sq1(tds, q1);
