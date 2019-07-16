@@ -10,6 +10,8 @@ const string DB_USERNAME = "Minerva_Apps";
 const string DB_PASSWORD = "Inf0rmati0n";
 const string DB_APP = "Janus";
 
+unsigned int log_id = 0;
+
 class result {
 public:
 	result(int query, const string& primary_key, const string& change, unsigned int col, optional<string> value1, optional<string> value2) :
@@ -39,6 +41,15 @@ static void do_compare(unsigned int num) {
 
 		q1 = sq[0];
 		q2 = sq[1];
+	}
+
+	{
+		tds::Query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) VALUES(GETDATE(), ?, 0, 'Interrupted.'); SELECT SCOPE_IDENTITY()", num);
+
+		if (!sq.fetch_row())
+			throw runtime_error("Error creating log entry.");
+
+		log_id = (unsigned int)sq[0];
 	}
 
 	tds.run(R"(
@@ -158,6 +169,8 @@ END
 				tds::Conn tds3(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_APP);
 				tds3.bcp("Comparer.results", { "query", "primary_key", "change", "col", "value1", "value2" }, v);
 
+				tds3.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", rows1, rows2, changed_rows, added_rows, removed_rows, log_id);
+
 				res.clear();
 			}
 		}
@@ -173,7 +186,7 @@ END
 		tds.bcp("Comparer.results", { "query", "primary_key", "change", "col", "value1", "value2" }, v);
 	}
 
-	tds.run("INSERT INTO Comparer.log(query, success, rows1, rows2, changed_rows, added_rows, removed_rows) VALUES(?, 1, ?, ?, ?, ?, ?)", num, rows1, rows2, changed_rows, added_rows, removed_rows);
+	tds.run("UPDATE Comparer.log SET success=1, rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE(), error=NULL WHERE id=?", rows1, rows2, changed_rows, added_rows, removed_rows, log_id);
 }
 
 int main(int argc, char* argv[]) {
@@ -192,7 +205,11 @@ int main(int argc, char* argv[]) {
 		cerr << "Exception: " << e.what() << endl;
 
 		tds::Conn tds(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_APP);
-		tds.run("INSERT INTO Comparer.log(query, success, error) VALUES(?, 0, ?)", num, string(e.what()));
+
+		if (log_id == 0)
+			tds.run("INSERT INTO Comparer.log(query, success, error) VALUES(?, 0, ?)", num, string(e.what()));
+		else
+			tds.run("UPDATE Comparer.log SET error=?, end_date=GETDATE() WHERE id=?", string(e.what()), log_id);
 
 		return 1;
 	}
