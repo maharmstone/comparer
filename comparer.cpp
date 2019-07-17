@@ -95,7 +95,7 @@ END
 						} else if (!v1.is_null() && v2.is_null()) {
 							res.emplace_back(num, pk1, "modified", i + 1, (string)v1, nullopt);
 							changed = true;
-						} else if ((string)v1 != (string)v2) {
+						} else if (!v1.is_null() && !v2.is_null() && (string)v1 != (string)v2) {
 							res.emplace_back(num, pk1, "modified", i + 1, (string)v1, (string)v2);
 							changed = true;
 						}
