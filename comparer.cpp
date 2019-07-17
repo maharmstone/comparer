@@ -27,7 +27,7 @@ public:
 
 static void do_compare(unsigned int num) {
 	bool b1, b2;
-	unsigned int rows1 = 0, rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0;
+	unsigned int rows1 = 0, rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0, rows_since_update = 0;
 	list<result> res;
 
 	tds::Conn tds(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_APP);
@@ -172,7 +172,15 @@ END
 				tds3.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", rows1, rows2, changed_rows, added_rows, removed_rows, log_id);
 
 				res.clear();
-			}
+				rows_since_update = 0;
+			} else if (rows_since_update > 1000) {
+				tds::Conn tds3(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_APP);
+
+				tds3.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", rows1, rows2, changed_rows, added_rows, removed_rows, log_id);
+
+				rows_since_update = 0;
+			} else
+				rows_since_update++;
 		}
 	}
 
