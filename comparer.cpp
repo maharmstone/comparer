@@ -1,3 +1,4 @@
+#include <windows.h>
 #include <tdscpp.h>
 #include <iostream>
 #include <string>
@@ -5,7 +6,6 @@
 #include <thread>
 #include <optional>
 #include <mutex>
-#include <condition_variable>
 #include <functional>
 
 using namespace std;
@@ -28,6 +28,34 @@ public:
 	string change;
 	unsigned int col;
 	optional<string> value1, value2;
+};
+
+class win_event {
+public:
+	win_event() {
+		h = CreateEvent(nullptr, false, false, nullptr);
+
+		if (!h)
+			throw runtime_error("CreateEvent failed (error " + to_string(GetLastError()) + ").");
+	}
+
+	~win_event() {
+		CloseHandle(h);
+	}
+
+	void set() {
+		SetEvent(h);
+	}
+
+	void wait() {
+		auto ret = WaitForSingleObject(h, INFINITE);
+
+		if (ret != WAIT_OBJECT_0)
+			throw runtime_error("CreateEvent returned " + to_string(ret) + ".");
+	}
+
+private:
+	HANDLE h;
 };
 
 class sql_thread {
@@ -68,19 +96,20 @@ public:
 					}
 				}
 				
-				cv.notify_one();
+				event.set();
 			} while (sq.fetch_row());
 		} catch (...) {
 			ex = current_exception();
 		}
 
 		finished = true;
-		cv.notify_one();
+		event.set();
 	}
 
 	void wait_for(const function<void()>& func) {
-		unique_lock<mutex> guard(lock);
-		cv.wait(guard);
+		event.wait();
+
+		lock_guard<mutex> guard(lock);
 
 		func();
 	}
@@ -92,11 +121,10 @@ public:
 	exception_ptr ex;
 	list<vector<optional<string>>> results;
 	mutex lock;
-	condition_variable cv;
+	win_event event;
 };
 
 static void do_compare(unsigned int num) {
-	bool b1, b2;
 	unsigned int num_rows1 = 0, num_rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0, rows_since_update = 0;
 	list<result> res;
 
@@ -113,7 +141,7 @@ static void do_compare(unsigned int num) {
 		q2 = sq[1];
 	}
 
-	bool t1_finished = false, t2_finished = false;
+	bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
 	vector<optional<string>> row1, row2;
 	list<vector<optional<string>>> rows1, rows2;
 
@@ -122,8 +150,13 @@ static void do_compare(unsigned int num) {
 
 	auto t1_fetch = [&]() {
 		while (rows1.empty() && !t1_finished) {
+			t1_finished = t1_done;
+
+			if (t1_finished)
+				return;
+
 			t1.wait_for([&]() {
-				t1_finished = t1.finished;
+				t1_done = t1.finished;
 
 				if (!t1.results.empty())
 					rows1.splice(rows1.end(), t1.results);
@@ -131,6 +164,11 @@ static void do_compare(unsigned int num) {
 				if (t1.finished && t1.ex)
 					rethrow_exception(t1.ex);
 			});
+
+			if (rows1.empty() && t1_done) {
+				t1_finished = true;
+				return;
+			}
 		}
 
 		row1 = move(rows1.front());
@@ -139,8 +177,13 @@ static void do_compare(unsigned int num) {
 
 	auto t2_fetch = [&]() {
 		while (rows2.empty() && !t2_finished) {
+			t2_finished = t2_done;
+
+			if (t2_finished)
+				return;
+
 			t2.wait_for([&]() {
-				t2_finished = t2.finished;
+				t2_done = t2.finished;
 
 				if (!t2.results.empty())
 					rows2.splice(rows2.end(), t2.results);
@@ -148,6 +191,11 @@ static void do_compare(unsigned int num) {
 				if (t2.finished && t2.ex)
 					rethrow_exception(t2.ex);
 			});
+
+			if (rows2.empty() && t2_done) {
+				t2_finished = true;
+				return;
+			}
 		}
 
 		row2 = move(rows2.front());
@@ -156,6 +204,31 @@ static void do_compare(unsigned int num) {
 
 	t1_fetch();
 	t2_fetch();
+
+	{
+		tds::Query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) VALUES(GETDATE(), ?, 0, 'Interrupted.'); SELECT SCOPE_IDENTITY()", num);
+
+		if (!sq.fetch_row())
+			throw runtime_error("Error creating log entry.");
+
+		log_id = (unsigned int)sq[0];
+	}
+
+	tds.run(R"(
+WHILE 1 = 1
+BEGIN
+	BEGIN TRANSACTION;
+
+	DELETE TOP (100000)
+	FROM Comparer.results
+	WHERE query=?;
+
+	COMMIT;
+
+	IF (SELECT COUNT(*) FROM Comparer.results WHERE query=?) = 0
+		BREAK;
+END
+)", num, num);
 
 	while (!t1_finished || !t2_finished) {
 		if (!t1_finished && !t2_finished) {
@@ -252,163 +325,25 @@ static void do_compare(unsigned int num) {
 			t2_fetch();
 		}
 
-		// FIXME - flush results
-		// FIXME - update log
-	}
+		if (res.size() > 10000) { // flush
+			vector<vector<optional<string>>> v;
 
-	cout << num_rows1 << ", " << num_rows2 << endl;
-
-	/*while (!t1.finished) {
-		unique_lock<mutex> guard(t1.lock);
-		t1.cv.wait(guard);
-
-		auto v = move(t1.results.front());
-
-		t1.results.pop_front();
-
-		cout << v[0].value_or("NULL") << endl;
-		//cout << t1.results.size() << endl;
-	}*/
-
-	/*{
-		tds::Query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) VALUES(GETDATE(), ?, 0, 'Interrupted.'); SELECT SCOPE_IDENTITY()", num);
-
-		if (!sq.fetch_row())
-			throw runtime_error("Error creating log entry.");
-
-		log_id = (unsigned int)sq[0];
-	}
-
-	tds.run(R"(
-WHILE 1 = 1
-BEGIN
-	BEGIN TRANSACTION;
-
-	DELETE TOP (100000)
-	FROM Comparer.results
-	WHERE query=?;
-
-	COMMIT;
-
-	IF (SELECT COUNT(*) FROM Comparer.results WHERE query=?) = 0
-		BREAK;
-END
-)", num, num);
-
-	{
-		tds::Query sq1(tds, q1);
-
-		tds::Conn tds2(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_APP);
-
-		tds::Query sq2(tds2, q2);
-
-		b1 = sq1.fetch_row();
-		b2 = sq2.fetch_row();
-
-		while (b1 || b2) {
-			if (b1 && b2) {
-				string pk1 = sq1[0], pk2 = sq2[0];
-
-				if (pk1 == pk2) {
-					bool changed = false;
-
-					for (unsigned int i = 1; i < sq1.num_columns(); i++) {
-						const auto& v1 = sq1[i];
-						const auto& v2 = sq2[i];
-
-						if (v1.is_null() && !v2.is_null()) {
-							res.emplace_back(num, pk1, "modified", i + 1, nullopt, (string)v2);
-							changed = true;
-						} else if (!v1.is_null() && v2.is_null()) {
-							res.emplace_back(num, pk1, "modified", i + 1, (string)v1, nullopt);
-							changed = true;
-						} else if (!v1.is_null() && !v2.is_null() && (string)v1 != (string)v2) {
-							res.emplace_back(num, pk1, "modified", i + 1, (string)v1, (string)v2);
-							changed = true;
-						}
-					}
-
-					if (changed)
-						changed_rows++;
-
-					rows1++;
-					rows2++;
-					b1 = sq1.fetch_row();
-					b2 = sq2.fetch_row();
-				} else if (pk1 < pk2) {
-					for (unsigned int i = 1; i < sq1.num_columns(); i++) {
-						if (sq1[i].is_null())
-							res.emplace_back(num, pk1, "removed", i + 1, nullopt, nullopt);
-						else
-							res.emplace_back(num, pk1, "removed", i + 1, (string)sq1[i], nullopt);
-					}
-
-					removed_rows++;
-					rows1++;
-					b1 = sq1.fetch_row();
-				} else {
-					for (unsigned int i = 1; i < sq2.num_columns(); i++) {
-						if (sq2[i].is_null())
-							res.emplace_back(num, pk2, "added", i + 1, nullopt, nullopt);
-						else
-							res.emplace_back(num, pk2, "added", i + 1, nullopt, (string)sq2[i]);
-					}
-
-					added_rows++;
-					rows2++;
-					b2 = sq2.fetch_row();
-				}
-			} else if (b1) {
-				string pk1 = sq1[0];
-
-				for (unsigned int i = 1; i < sq1.num_columns(); i++) {
-					if (sq1[i].is_null())
-						res.emplace_back(num, pk1, "removed", i + 1, nullopt, nullopt);
-					else
-						res.emplace_back(num, pk1, "removed", i + 1, (string)sq1[i], nullopt);
-				}
-
-				removed_rows++;
-				rows1++;
-				b1 = sq1.fetch_row();
-			} else {
-				string pk2 = sq2[0];
-
-				for (unsigned int i = 1; i < sq2.num_columns(); i++) {
-					if (sq2[i].is_null())
-						res.emplace_back(num, pk2, "added", i + 1, nullopt, nullopt);
-					else
-						res.emplace_back(num, pk2, "added", i + 1, nullopt, (string)sq2[i]);
-				}
-
-				added_rows++;
-				rows2++;
-				b2 = sq2.fetch_row();
+			for (const auto& r : res) {
+				v.emplace_back(vector<optional<string>>{to_string(r.query), r.primary_key, r.change, to_string(r.col), r.value1, r.value2});
 			}
 
-			if (res.size() > 10000) { // flush
-				vector<vector<optional<string>>> v;
+			tds.bcp("Comparer.results", { "query", "primary_key", "change", "col", "value1", "value2" }, v);
 
-				for (const auto& r : res) {
-					v.emplace_back(vector<optional<string>>{to_string(r.query), r.primary_key, r.change, to_string(r.col), r.value1, r.value2});
-				}
+			tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
 
-				tds::Conn tds3(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_APP);
-				tds3.bcp("Comparer.results", { "query", "primary_key", "change", "col", "value1", "value2" }, v);
+			res.clear();
+			rows_since_update = 0;
+		} else if (rows_since_update > 1000) {
+			tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
 
-				tds3.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", rows1, rows2, changed_rows, added_rows, removed_rows, log_id);
-
-				res.clear();
-				rows_since_update = 0;
-			} else if (rows_since_update > 1000) {
-				tds::Conn tds3(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_APP);
-
-				tds3.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", rows1, rows2, changed_rows, added_rows, removed_rows, log_id);
-
-				rows_since_update = 0;
-			} else
-				rows_since_update++;
-		}
+			rows_since_update = 0;
+		} else
+			rows_since_update++;
 	}
 
 	if (!res.empty()) {
@@ -421,7 +356,7 @@ END
 		tds.bcp("Comparer.results", { "query", "primary_key", "change", "col", "value1", "value2" }, v);
 	}
 
-	tds.run("UPDATE Comparer.log SET success=1, rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE(), error=NULL WHERE id=?", rows1, rows2, changed_rows, added_rows, removed_rows, log_id);*/
+	tds.run("UPDATE Comparer.log SET success=1, rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE(), error=NULL WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
 }
 
 int main(int argc, char* argv[]) {
