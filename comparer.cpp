@@ -97,7 +97,7 @@ public:
 
 static void do_compare(unsigned int num) {
 	bool b1, b2;
-	unsigned int rows1 = 0, rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0, rows_since_update = 0;
+	unsigned int num_rows1 = 0, num_rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0, rows_since_update = 0;
 	list<result> res;
 
 	tds::Conn tds(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_APP);
@@ -113,44 +113,49 @@ static void do_compare(unsigned int num) {
 		q2 = sq[1];
 	}
 
-	bool t1_finished, t2_finished;
+	bool t1_finished = false, t2_finished = false;
 	vector<optional<string>> row1, row2;
+	list<vector<optional<string>>> rows1, rows2;
 
 	sql_thread t1(q1);
 	sql_thread t2(q2);
 
 	auto t1_fetch = [&]() {
-		t1.wait_for([&]() {
-			t1_finished = t1.finished;
+		while (rows1.empty() && !t1_finished) {
+			t1.wait_for([&]() {
+				t1_finished = t1.finished;
 
-			if (!t1.results.empty()) {
-				row1 = move(t1.results.front());
-				t1.results.pop_front();
-			}
+				if (!t1.results.empty())
+					rows1.splice(rows1.end(), t1.results);
 
-			if (t1.finished && t1.ex)
-				rethrow_exception(t1.ex);
-		});
+				if (t1.finished && t1.ex)
+					rethrow_exception(t1.ex);
+			});
+		}
+
+		row1 = move(rows1.front());
+		rows1.pop_front();
 	};
 
 	auto t2_fetch = [&]() {
-		t2.wait_for([&]() {
-			t2_finished = t2.finished;
+		while (rows2.empty() && !t2_finished) {
+			t2.wait_for([&]() {
+				t2_finished = t2.finished;
 
-			if (!t2.results.empty()) {
-				row2 = move(t2.results.front());
-				t2.results.pop_front();
-			}
+				if (!t2.results.empty())
+					rows2.splice(rows2.end(), t2.results);
 
-			if (t2.finished && t2.ex)
-				rethrow_exception(t2.ex);
-		});
+				if (t2.finished && t2.ex)
+					rethrow_exception(t2.ex);
+			});
+		}
+
+		row2 = move(rows2.front());
+		rows2.pop_front();
 	};
 
 	t1_fetch();
 	t2_fetch();
-
-	// FIXME - can we avoid excessive RAM usage?
 
 	while (!t1_finished || !t2_finished) {
 		if (!t1_finished && !t2_finished) {
@@ -179,8 +184,8 @@ static void do_compare(unsigned int num) {
 				if (changed)
 					changed_rows++;
 
-				rows1++;
-				rows2++;
+				num_rows1++;
+				num_rows2++;
 
 				t1_fetch();
 				t2_fetch();
@@ -195,7 +200,7 @@ static void do_compare(unsigned int num) {
 				}
 
 				removed_rows++;
-				rows1++;
+				num_rows1++;
 
 				t1_fetch();
 			} else {
@@ -209,7 +214,7 @@ static void do_compare(unsigned int num) {
 				}
 
 				added_rows++;
-				rows2++;
+				num_rows2++;
 
 				t2_fetch();
 			}
@@ -226,7 +231,7 @@ static void do_compare(unsigned int num) {
 			}
 
 			removed_rows++;
-			rows1++;
+			num_rows1++;
 
 			t1_fetch();
 		} else {
@@ -242,7 +247,7 @@ static void do_compare(unsigned int num) {
 			}
 
 			added_rows++;
-			rows2++;
+			num_rows2++;
 
 			t2_fetch();
 		}
@@ -251,7 +256,7 @@ static void do_compare(unsigned int num) {
 		// FIXME - update log
 	}
 
-	cout << rows1 << ", " << rows2 << endl;
+	cout << num_rows1 << ", " << num_rows2 << endl;
 
 	/*while (!t1.finished) {
 		unique_lock<mutex> guard(t1.lock);
