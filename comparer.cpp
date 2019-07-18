@@ -79,6 +79,14 @@ public:
 			auto num_col = sq.num_columns();
 
 			do {
+				unsigned int num_res;
+
+				do {
+					lock_guard<mutex> guard(lock);
+
+					num_res = results.size();
+				} while (num_res > 100000);
+
 				{
 					lock_guard<mutex> guard(lock);
 
