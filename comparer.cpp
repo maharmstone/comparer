@@ -2,6 +2,11 @@
 #include <iostream>
 #include <string>
 #include <list>
+#include <thread>
+#include <optional>
+#include <mutex>
+#include <condition_variable>
+#include <functional>
 
 using namespace std;
 
@@ -25,6 +30,71 @@ public:
 	optional<string> value1, value2;
 };
 
+class sql_thread {
+public:
+	sql_thread(const string_view& query) : finished(false), query(query), tds(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_APP), t([](sql_thread* st) {
+			st->run();
+		}, this) {
+	}
+
+	~sql_thread() {
+		t.join();
+	}
+
+	void run() {
+		try {
+			tds::Query sq(tds, query);
+
+			if (!sq.fetch_row())
+				throw runtime_error("No results returned.");
+
+			auto num_col = sq.num_columns();
+
+			do {
+				{
+					lock_guard<mutex> guard(lock);
+
+					results.emplace_back();
+
+					auto& v = results.back();
+
+					v.reserve(num_col);
+
+					for (unsigned int i = 0; i < num_col; i++) {
+						if (sq[i].is_null())
+							v.emplace_back(nullopt);
+						else
+							v.emplace_back((string)sq[i]);
+					}
+				}
+				
+				cv.notify_one();
+			} while (sq.fetch_row());
+		} catch (...) {
+			ex = current_exception();
+		}
+
+		finished = true;
+		cv.notify_one();
+	}
+
+	void wait_for(const function<void()>& func) {
+		unique_lock<mutex> guard(lock);
+		cv.wait(guard);
+
+		func();
+	}
+
+	bool finished;
+	string query;
+	tds::Conn tds;
+	thread t;
+	exception_ptr ex;
+	list<vector<optional<string>>> results;
+	mutex lock;
+	condition_variable cv;
+};
+
 static void do_compare(unsigned int num) {
 	bool b1, b2;
 	unsigned int rows1 = 0, rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0, rows_since_update = 0;
@@ -43,7 +113,159 @@ static void do_compare(unsigned int num) {
 		q2 = sq[1];
 	}
 
-	{
+	bool t1_finished, t2_finished;
+	vector<optional<string>> row1, row2;
+
+	sql_thread t1(q1);
+	sql_thread t2(q2);
+
+	auto t1_fetch = [&]() {
+		t1.wait_for([&]() {
+			t1_finished = t1.finished;
+
+			if (!t1.results.empty()) {
+				row1 = move(t1.results.front());
+				t1.results.pop_front();
+			}
+
+			if (t1.finished && t1.ex)
+				rethrow_exception(t1.ex);
+		});
+	};
+
+	auto t2_fetch = [&]() {
+		t2.wait_for([&]() {
+			t2_finished = t2.finished;
+
+			if (!t2.results.empty()) {
+				row2 = move(t2.results.front());
+				t2.results.pop_front();
+			}
+
+			if (t2.finished && t2.ex)
+				rethrow_exception(t2.ex);
+		});
+	};
+
+	t1_fetch();
+	t2_fetch();
+
+	// FIXME - can we avoid excessive RAM usage?
+
+	while (!t1_finished || !t2_finished) {
+		if (!t1_finished && !t2_finished) {
+			const string& pk1 = row1[0].value();
+			const string& pk2 = row2[0].value();
+
+			if (pk1 == pk2) {
+				bool changed = false;
+
+				for (unsigned int i = 1; i < row1.size(); i++) {
+					const auto& v1 = row1[i];
+					const auto& v2 = row2[i];
+
+					if (!v1.has_value() && v2.has_value()) {
+						res.emplace_back(num, pk1, "modified", i + 1, nullopt, v2);
+						changed = true;
+					} else if (v1.has_value() && !v2.has_value()) {
+						res.emplace_back(num, pk1, "modified", i + 1, v1, nullopt);
+						changed = true;
+					} else if (v1.has_value() && v2.has_value() && v1.value() != v2.value()) {
+						res.emplace_back(num, pk1, "modified", i + 1, v1, v2);
+						changed = true;
+					}
+				}
+
+				if (changed)
+					changed_rows++;
+
+				rows1++;
+				rows2++;
+
+				t1_fetch();
+				t2_fetch();
+			} else if (pk1 < pk2) {
+				for (unsigned int i = 1; i < row1.size(); i++) {
+					const auto& v1 = row1[i];
+
+					if (!v1.has_value())
+						res.emplace_back(num, pk1, "removed", i + 1, nullopt, nullopt);
+					else
+						res.emplace_back(num, pk1, "removed", i + 1, v1.value(), nullopt);
+				}
+
+				removed_rows++;
+				rows1++;
+
+				t1_fetch();
+			} else {
+				for (unsigned int i = 1; i < row2.size(); i++) {
+					const auto& v2 = row2[i];
+
+					if (!v2.has_value())
+						res.emplace_back(num, pk2, "added", i + 1, nullopt, nullopt);
+					else
+						res.emplace_back(num, pk2, "added", i + 1, nullopt, v2.value());
+				}
+
+				added_rows++;
+				rows2++;
+
+				t2_fetch();
+			}
+		} else if (!t1_finished) {
+			const string& pk1 = row1[0].value();
+
+			for (unsigned int i = 1; i < row1.size(); i++) {
+				const auto& v1 = row1[i];
+
+				if (!v1.has_value())
+					res.emplace_back(num, pk1, "removed", i + 1, nullopt, nullopt);
+				else
+					res.emplace_back(num, pk1, "removed", i + 1, v1.value(), nullopt);
+			}
+
+			removed_rows++;
+			rows1++;
+
+			t1_fetch();
+		} else {
+			const string& pk2 = row2[0].value();
+
+			for (unsigned int i = 1; i < row2.size(); i++) {
+				const auto& v2 = row2[i];
+
+				if (!v2.has_value())
+					res.emplace_back(num, pk2, "added", i + 1, nullopt, nullopt);
+				else
+					res.emplace_back(num, pk2, "added", i + 1, nullopt, v2.value());
+			}
+
+			added_rows++;
+			rows2++;
+
+			t2_fetch();
+		}
+
+		// FIXME - flush results
+		// FIXME - update log
+	}
+
+	cout << rows1 << ", " << rows2 << endl;
+
+	/*while (!t1.finished) {
+		unique_lock<mutex> guard(t1.lock);
+		t1.cv.wait(guard);
+
+		auto v = move(t1.results.front());
+
+		t1.results.pop_front();
+
+		cout << v[0].value_or("NULL") << endl;
+		//cout << t1.results.size() << endl;
+	}*/
+
+	/*{
 		tds::Query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) VALUES(GETDATE(), ?, 0, 'Interrupted.'); SELECT SCOPE_IDENTITY()", num);
 
 		if (!sq.fetch_row())
@@ -194,7 +416,7 @@ END
 		tds.bcp("Comparer.results", { "query", "primary_key", "change", "col", "value1", "value2" }, v);
 	}
 
-	tds.run("UPDATE Comparer.log SET success=1, rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE(), error=NULL WHERE id=?", rows1, rows2, changed_rows, added_rows, removed_rows, log_id);
+	tds.run("UPDATE Comparer.log SET success=1, rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE(), error=NULL WHERE id=?", rows1, rows2, changed_rows, added_rows, removed_rows, log_id);*/
 }
 
 int main(int argc, char* argv[]) {
