@@ -17,15 +17,21 @@ const string DB_APP = "Janus";
 
 unsigned int log_id = 0;
 
+enum class change {
+	modified,
+	added,
+	removed
+};
+
 class result {
 public:
-	result(int query, const string& primary_key, const string& change, unsigned int col, optional<string> value1, optional<string> value2) :
+	result(int query, const string& primary_key, enum class change change, unsigned int col, optional<string> value1, optional<string> value2) :
 		query(query), primary_key(primary_key), change(change), col(col), value1(value1), value2(value2) {
 	}
 
 	int query;
 	string primary_key;
-	string change;
+	enum class change change;
 	unsigned int col;
 	optional<string> value1, value2;
 };
@@ -79,13 +85,16 @@ public:
 			auto num_col = sq.num_columns();
 
 			do {
-				unsigned int num_res;
+				size_t num_res;
 
 				do {
 					lock_guard<mutex> guard(lock);
 
 					num_res = results.size();
-				} while (num_res > 100000);
+				} while (num_res > 100000 && !finished);
+
+				if (finished)
+					break;
 
 				{
 					lock_guard<mutex> guard(lock);
@@ -105,7 +114,7 @@ public:
 				}
 				
 				event.set();
-			} while (sq.fetch_row());
+			} while (!finished && sq.fetch_row());
 		} catch (...) {
 			ex = current_exception();
 		}
@@ -210,19 +219,20 @@ static void do_compare(unsigned int num) {
 		rows2.pop_front();
 	};
 
-	t1_fetch();
-	t2_fetch();
+	try {
+		t1_fetch();
+		t2_fetch();
 
-	{
-		tds::Query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) VALUES(GETDATE(), ?, 0, 'Interrupted.'); SELECT SCOPE_IDENTITY()", num);
+		{
+			tds::Query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) VALUES(GETDATE(), ?, 0, 'Interrupted.'); SELECT SCOPE_IDENTITY()", num);
 
-		if (!sq.fetch_row())
-			throw runtime_error("Error creating log entry.");
+			if (!sq.fetch_row())
+				throw runtime_error("Error creating log entry.");
 
-		log_id = (unsigned int)sq[0];
-	}
+			log_id = (unsigned int)sq[0];
+		}
 
-	tds.run(R"(
+		tds.run(R"(
 WHILE 1 = 1
 BEGIN
 	BEGIN TRANSACTION;
@@ -238,46 +248,71 @@ BEGIN
 END
 )", num, num);
 
-	while (!t1_finished || !t2_finished) {
-		if (!t1_finished && !t2_finished) {
-			const string& pk1 = row1[0].value();
-			const string& pk2 = row2[0].value();
+		while (!t1_finished || !t2_finished) {
+			if (!t1_finished && !t2_finished) {
+				const auto& pk1 = row1[0].value();
+				const auto& pk2 = row2[0].value();
 
-			if (pk1 == pk2) {
-				bool changed = false;
+				if (pk1 == pk2) {
+					bool changed = false;
 
-				for (unsigned int i = 1; i < row1.size(); i++) {
-					const auto& v1 = row1[i];
-					const auto& v2 = row2[i];
+					for (unsigned int i = 1; i < row1.size(); i++) {
+						const auto& v1 = row1[i];
+						const auto& v2 = row2[i];
 
-					if (!v1.has_value() && v2.has_value()) {
-						res.emplace_back(num, pk1, "modified", i + 1, nullopt, v2);
-						changed = true;
-					} else if (v1.has_value() && !v2.has_value()) {
-						res.emplace_back(num, pk1, "modified", i + 1, v1, nullopt);
-						changed = true;
-					} else if (v1.has_value() && v2.has_value() && v1.value() != v2.value()) {
-						res.emplace_back(num, pk1, "modified", i + 1, v1, v2);
-						changed = true;
+						if ((v1.has_value() && !v2.has_value()) || (v2.has_value() && !v1.has_value()) || (v1.has_value() && v2.has_value() && v1.value() != v2.value())) {
+							res.emplace_back(num, pk1, change::modified, i + 1, v1, v2);
+							changed = true;
+						}
 					}
+
+					if (changed)
+						changed_rows++;
+
+					num_rows1++;
+					num_rows2++;
+
+					t1_fetch();
+					t2_fetch();
+				} else if (pk1 < pk2) {
+					for (unsigned int i = 1; i < row1.size(); i++) {
+						const auto& v1 = row1[i];
+
+						if (!v1.has_value())
+							res.emplace_back(num, pk1, change::removed, i + 1, nullopt, nullopt);
+						else
+							res.emplace_back(num, pk1, change::removed, i + 1, v1.value(), nullopt);
+					}
+
+					removed_rows++;
+					num_rows1++;
+
+					t1_fetch();
+				} else {
+					for (unsigned int i = 1; i < row2.size(); i++) {
+						const auto& v2 = row2[i];
+
+						if (!v2.has_value())
+							res.emplace_back(num, pk2, change::added, i + 1, nullopt, nullopt);
+						else
+							res.emplace_back(num, pk2, change::added, i + 1, nullopt, v2.value());
+					}
+
+					added_rows++;
+					num_rows2++;
+
+					t2_fetch();
 				}
+			} else if (!t1_finished) {
+				const string& pk1 = row1[0].value();
 
-				if (changed)
-					changed_rows++;
-
-				num_rows1++;
-				num_rows2++;
-
-				t1_fetch();
-				t2_fetch();
-			} else if (pk1 < pk2) {
 				for (unsigned int i = 1; i < row1.size(); i++) {
 					const auto& v1 = row1[i];
 
 					if (!v1.has_value())
-						res.emplace_back(num, pk1, "removed", i + 1, nullopt, nullopt);
+						res.emplace_back(num, pk1, change::removed, i + 1, nullopt, nullopt);
 					else
-						res.emplace_back(num, pk1, "removed", i + 1, v1.value(), nullopt);
+						res.emplace_back(num, pk1, change::removed, i + 1, v1.value(), nullopt);
 				}
 
 				removed_rows++;
@@ -285,13 +320,15 @@ END
 
 				t1_fetch();
 			} else {
+				const string& pk2 = row2[0].value();
+
 				for (unsigned int i = 1; i < row2.size(); i++) {
 					const auto& v2 = row2[i];
 
 					if (!v2.has_value())
-						res.emplace_back(num, pk2, "added", i + 1, nullopt, nullopt);
+						res.emplace_back(num, pk2, change::added, i + 1, nullopt, nullopt);
 					else
-						res.emplace_back(num, pk2, "added", i + 1, nullopt, v2.value());
+						res.emplace_back(num, pk2, change::added, i + 1, nullopt, v2.value());
 				}
 
 				added_rows++;
@@ -299,72 +336,53 @@ END
 
 				t2_fetch();
 			}
-		} else if (!t1_finished) {
-			const string& pk1 = row1[0].value();
 
-			for (unsigned int i = 1; i < row1.size(); i++) {
-				const auto& v1 = row1[i];
+			if (res.size() > 10000) { // flush
+				vector<vector<optional<string>>> v;
 
-				if (!v1.has_value())
-					res.emplace_back(num, pk1, "removed", i + 1, nullopt, nullopt);
-				else
-					res.emplace_back(num, pk1, "removed", i + 1, v1.value(), nullopt);
-			}
+				v.reserve(res.size());
 
-			removed_rows++;
-			num_rows1++;
+				while (!res.empty()) {
+					auto r = move(res.front());
+					res.pop_front();
 
-			t1_fetch();
-		} else {
-			const string& pk2 = row2[0].value();
+					v.emplace_back(vector<optional<string>>{to_string(r.query), r.primary_key, r.change == change::added ? "added" : (r.change == change::removed ? "removed" : "modified"), to_string(r.col), r.value1, r.value2});
+				}
 
-			for (unsigned int i = 1; i < row2.size(); i++) {
-				const auto& v2 = row2[i];
+				tds.bcp("Comparer.results", { "query", "primary_key", "change", "col", "value1", "value2" }, v);
 
-				if (!v2.has_value())
-					res.emplace_back(num, pk2, "added", i + 1, nullopt, nullopt);
-				else
-					res.emplace_back(num, pk2, "added", i + 1, nullopt, v2.value());
-			}
+				tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
 
-			added_rows++;
-			num_rows2++;
+				rows_since_update = 0;
+			} else if (rows_since_update > 1000) {
+				tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
 
-			t2_fetch();
+				rows_since_update = 0;
+			} else
+				rows_since_update++;
 		}
 
-		if (res.size() > 10000) { // flush
+		if (!res.empty()) {
 			vector<vector<optional<string>>> v;
 
-			for (const auto& r : res) {
-				v.emplace_back(vector<optional<string>>{to_string(r.query), r.primary_key, r.change, to_string(r.col), r.value1, r.value2});
+			v.reserve(res.size());
+
+			while (!res.empty()) {
+				auto r = move(res.front());
+				res.pop_front();
+
+				v.emplace_back(vector<optional<string>>{to_string(r.query), r.primary_key, r.change == change::added ? "added" : (r.change == change::removed ? "removed" : "modified"), to_string(r.col), r.value1, r.value2});
 			}
 
 			tds.bcp("Comparer.results", { "query", "primary_key", "change", "col", "value1", "value2" }, v);
-
-			tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
-
-			res.clear();
-			rows_since_update = 0;
-		} else if (rows_since_update > 1000) {
-			tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
-
-			rows_since_update = 0;
-		} else
-			rows_since_update++;
-	}
-
-	if (!res.empty()) {
-		vector<vector<optional<string>>> v;
-
-		for (const auto& r : res) {
-			v.emplace_back(vector<optional<string>>{to_string(r.query), r.primary_key, r.change, to_string(r.col), r.value1, r.value2});
 		}
 
-		tds.bcp("Comparer.results", { "query", "primary_key", "change", "col", "value1", "value2" }, v);
+		tds.run("UPDATE Comparer.log SET success=1, rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE(), error=NULL WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
+	} catch (...) {
+		t1.finished = true;
+		t2.finished = true;
+		throw;
 	}
-
-	tds.run("UPDATE Comparer.log SET success=1, rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE(), error=NULL WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
 }
 
 int main(int argc, char* argv[]) {
