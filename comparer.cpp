@@ -80,8 +80,7 @@ public:
 		try {
 			tds::Query sq(tds, query);
 
-			if (!sq.fetch_row())
-				throw runtime_error("No results returned.");
+			auto b = sq.fetch_row();
 
 			auto num_col = sq.num_columns();
 
@@ -92,37 +91,39 @@ public:
 					col_names.emplace_back(sq[i].name);
 			}
 
-			do {
-				size_t num_res;
-
+			if (b) {
 				do {
-					lock_guard<mutex> guard(lock);
+					size_t num_res;
 
-					num_res = results.size();
-				} while (num_res > 100000 && !finished);
+					do {
+						lock_guard<mutex> guard(lock);
 
-				if (finished)
-					break;
+						num_res = results.size();
+					} while (num_res > 100000 && !finished);
 
-				{
-					lock_guard<mutex> guard(lock);
+					if (finished)
+						break;
 
-					results.emplace_back();
+					{
+						lock_guard<mutex> guard(lock);
 
-					auto& v = results.back();
+						results.emplace_back();
 
-					v.reserve(num_col);
+						auto& v = results.back();
 
-					for (unsigned int i = 0; i < num_col; i++) {
-						if (sq[i].is_null())
-							v.emplace_back(nullopt);
-						else
-							v.emplace_back((string)sq[i]);
+						v.reserve(num_col);
+
+						for (unsigned int i = 0; i < num_col; i++) {
+							if (sq[i].is_null())
+								v.emplace_back(nullopt);
+							else
+								v.emplace_back((string)sq[i]);
+						}
 					}
-				}
 				
-				event.set();
-			} while (!finished && sq.fetch_row());
+					event.set();
+				} while (!finished && sq.fetch_row());
+			}
 		} catch (...) {
 			ex = current_exception();
 		}
