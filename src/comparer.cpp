@@ -26,14 +26,14 @@ enum class change {
 
 class result {
 public:
-	result(int query, const string& primary_key, enum class change change, unsigned int col,
+	result(int query, const string& primary_key, enum change change, unsigned int col,
 		   const tds::value& value1, const tds::value& value2, const tds::value& col_name) :
 		query(query), primary_key(primary_key), change(change), col(col), value1(value1), value2(value2), col_name(col_name) {
 	}
 
 	int query;
 	string primary_key;
-	enum class change change;
+	enum change change;
 	unsigned int col;
 	tds::value value1, value2, col_name;
 };
@@ -85,7 +85,7 @@ public:
 
 			auto num_col = sq.num_columns();
 
-			for (unsigned int i = 0; i < num_col; i++) {
+			for (uint16_t i = 0; i < num_col; i++) {
 				if (sq[i].name.empty())
 					col_names.emplace_back(nullptr);
 				else
@@ -114,7 +114,7 @@ public:
 
 						v.reserve(num_col);
 
-						for (unsigned int i = 0; i < num_col; i++) {
+						for (uint16_t i = 0; i < num_col; i++) {
 							if (sq[i].is_null)
 								v.emplace_back(nullptr);
 							else
