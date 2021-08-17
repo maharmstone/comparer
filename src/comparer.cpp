@@ -11,17 +11,55 @@
 
 using namespace std;
 
-const string DB_SERVER = "sys488";
 const string DB_USERNAME = "Minerva_Apps";
 const string DB_PASSWORD = "Inf0rmati0n";
 const string DB_APP = "Janus";
 
 unsigned int log_id = 0;
+string db_server;
 
 enum class change {
 	modified,
 	added,
 	removed
+};
+
+class last_error : public std::exception {
+public:
+	last_error(const std::string_view& function, int le) {
+		std::string nice_msg;
+
+		{
+			char16_t* fm;
+
+			if (FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr,
+				le, 0, reinterpret_cast<LPWSTR>(&fm), 0, nullptr)) {
+				try {
+					std::u16string_view s = fm;
+
+					while (!s.empty() && (s[s.length() - 1] == u'\r' || s[s.length() - 1] == u'\n')) {
+						s.remove_suffix(1);
+					}
+
+					nice_msg = tds::utf16_to_utf8(s);
+				} catch (...) {
+					LocalFree(fm);
+					throw;
+				}
+
+				LocalFree(fm);
+				}
+		}
+
+		msg = std::string(function) + " failed (error " + std::to_string(le) + (!nice_msg.empty() ? (", " + nice_msg) : "") + ").";
+	}
+
+	const char* what() const noexcept {
+		return msg.c_str();
+	}
+
+private:
+	std::string msg;
 };
 
 class result {
@@ -44,7 +82,7 @@ public:
 		h = CreateEvent(nullptr, false, false, nullptr);
 
 		if (!h)
-			throw runtime_error("CreateEvent failed (error " + to_string(GetLastError()) + ").");
+			throw last_error("CreateEvent", GetLastError());
 	}
 
 	~win_event() {
@@ -68,7 +106,7 @@ private:
 
 class sql_thread {
 public:
-	sql_thread(const string_view& query) : finished(false), query(query), tds(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_APP), t([](sql_thread* st) {
+	sql_thread(const string_view& query) : finished(false), query(query), tds(db_server, DB_USERNAME, DB_PASSWORD, DB_APP), t([](sql_thread* st) {
 			st->run();
 		}, this) {
 	}
@@ -156,7 +194,7 @@ static void do_compare(unsigned int num) {
 	unsigned int num_rows1 = 0, num_rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0, rows_since_update = 0;
 	list<result> res;
 
-	tds::tds tds(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_APP);
+	tds::tds tds(db_server, DB_USERNAME, DB_PASSWORD, DB_APP);
 
 	string q1, q2;
 	{
@@ -399,6 +437,28 @@ END
 	}
 }
 
+static optional<u16string> get_environment_variable(const u16string& name) {
+	auto len = GetEnvironmentVariableW((WCHAR*)name.c_str(), nullptr, 0);
+
+	if (len == 0) {
+		if (GetLastError() == ERROR_ENVVAR_NOT_FOUND)
+			return nullopt;
+
+		return u"";
+	}
+
+	u16string ret(len, 0);
+
+	if (GetEnvironmentVariableW((WCHAR*)name.c_str(), (WCHAR*)ret.data(), len) == 0)
+		throw last_error("GetEnvironmentVariableW", GetLastError());
+
+	while (!ret.empty() && ret.back() == 0) {
+		ret.pop_back();
+	}
+
+	return ret;
+}
+
 int main(int argc, char* argv[]) {
 	unsigned int num;
 
@@ -407,19 +467,32 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	num = stoul(argv[1]);
-
 	try {
+		num = stoul(argv[1]);
+
+		auto db_server_env = get_environment_variable(u"DB_RMTSERVER");
+
+		if (!db_server_env.has_value())
+			throw runtime_error("Environment variable DB_RMTSERVER not set.");
+
+		db_server = tds::utf16_to_utf8(db_server_env.value());
+
+		if (db_server == "(local)") // SQL Agent does this
+			db_server = "localhost";
+
 		do_compare(num);
 	} catch (const exception& e) {
 		cerr << "Exception: " << e.what() << endl;
 
-		tds::tds tds(DB_SERVER, DB_USERNAME, DB_PASSWORD, DB_APP);
+		try {
+			tds::tds tds(db_server, DB_USERNAME, DB_PASSWORD, DB_APP);
 
-		if (log_id == 0)
-			tds.run("INSERT INTO Comparer.log(query, success, error) VALUES(?, 0, ?)", num, e.what());
-		else
-			tds.run("UPDATE Comparer.log SET error=?, end_date=GETDATE() WHERE id=?", e.what(), log_id);
+			if (log_id == 0)
+				tds.run("INSERT INTO Comparer.log(query, success, error) VALUES(?, 0, ?)", num, e.what());
+			else
+				tds.run("UPDATE Comparer.log SET error=?, end_date=GETDATE() WHERE id=?", e.what(), log_id);
+		} catch (...) {
+		}
 
 		return 1;
 	}
