@@ -188,6 +188,12 @@ public:
 	vector<tds::value> col_names;
 };
 
+static void create_queries(tds::tds& tds, const string_view& tbl1, const string_view& tbl2,
+						   string& q1, string& q2) {
+	// FIXME
+	throw runtime_error("FIXME - create_queries");
+}
+
 static void do_compare(unsigned int num) {
 	unsigned int num_rows1 = 0, num_rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0, rows_since_update = 0;
 	list<result> res;
@@ -195,14 +201,37 @@ static void do_compare(unsigned int num) {
 	tds::tds tds(db_server, db_username, db_password, DB_APP);
 
 	string q1, q2;
+
 	{
-		tds::query sq(tds, "SELECT query1, query2 FROM Comparer.queries WHERE id=?", num);
+		tds::query sq(tds, "SELECT type, query1, query2, table1, table2 FROM Comparer.queries WHERE id=?", num);
 
 		if (!sq.fetch_row())
 			throw runtime_error("Unable to find entry in Comparer.queries");
 
-		q1 = (string)sq[0];
-		q2 = (string)sq[1];
+		auto type = (string)sq[0];
+
+		if (type == "query") {
+			if (sq[1].is_null)
+				throw runtime_error("query1 is NULL");
+
+			if (sq[2].is_null)
+				throw runtime_error("query2 is NULL");
+
+			q1 = (string)sq[1];
+			q2 = (string)sq[2];
+		} else if (type == "table") {
+			if (sq[3].is_null)
+				throw runtime_error("table1 is NULL");
+
+			if (sq[4].is_null)
+				throw runtime_error("table2 is NULL");
+
+			auto tbl1 = (string)sq[3];
+			auto tbl2 = (string)sq[4];
+
+			create_queries(tds, tbl1, tbl2, q1, q2);
+		} else
+			throw runtime_error("Unsupported type " + type + ".");
 	}
 
 	bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
