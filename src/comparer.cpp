@@ -11,12 +11,10 @@
 
 using namespace std;
 
-const string DB_USERNAME = "Minerva_Apps";
-const string DB_PASSWORD = "Inf0rmati0n";
-const string DB_APP = "Janus";
+static const string DB_APP = "Janus";
 
-unsigned int log_id = 0;
-string db_server;
+static unsigned int log_id = 0;
+static string db_server, db_username, db_password;
 
 enum class change {
 	modified,
@@ -106,7 +104,7 @@ private:
 
 class sql_thread {
 public:
-	sql_thread(const string_view& query) : finished(false), query(query), tds(db_server, DB_USERNAME, DB_PASSWORD, DB_APP), t([](sql_thread* st) {
+	sql_thread(const string_view& query) : finished(false), query(query), tds(db_server, db_username, db_password, DB_APP), t([](sql_thread* st) {
 			st->run();
 		}, this) {
 	}
@@ -194,7 +192,7 @@ static void do_compare(unsigned int num) {
 	unsigned int num_rows1 = 0, num_rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0, rows_since_update = 0;
 	list<result> res;
 
-	tds::tds tds(db_server, DB_USERNAME, DB_PASSWORD, DB_APP);
+	tds::tds tds(db_server, db_username, db_password, DB_APP);
 
 	string q1, q2;
 	{
@@ -480,12 +478,22 @@ int main(int argc, char* argv[]) {
 		if (db_server == "(local)") // SQL Agent does this
 			db_server = "localhost";
 
+		auto db_username_env = get_environment_variable(u"DB_USERNAME");
+
+		if (db_username_env.has_value())
+			db_username = tds::utf16_to_utf8(db_username_env.value());
+
+		auto db_password_env = get_environment_variable(u"DB_PASSWORD");
+
+		if (db_password_env.has_value())
+			db_password = tds::utf16_to_utf8(db_password_env.value());
+
 		do_compare(num);
 	} catch (const exception& e) {
 		cerr << "Exception: " << e.what() << endl;
 
 		try {
-			tds::tds tds(db_server, DB_USERNAME, DB_PASSWORD, DB_APP);
+			tds::tds tds(db_server, db_username, db_password, DB_APP);
 
 			if (log_id == 0)
 				tds.run("INSERT INTO Comparer.log(query, success, error) VALUES(?, 0, ?)", num, e.what());
