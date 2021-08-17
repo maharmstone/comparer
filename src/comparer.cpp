@@ -121,7 +121,7 @@ public:
 								v.emplace_back((string)sq[i]);
 						}
 					}
-				
+
 					event.set();
 				} while (!finished && sq.fetch_row());
 			}
@@ -335,7 +335,7 @@ END
 				t1_fetch();
 			} else {
 				const auto& pk2 = (string)row2[0];
-				
+
 				for (unsigned int i = 1; i < row2.size(); i++) {
 					const auto& v2 = row2[i];
 
@@ -400,7 +400,7 @@ END
 }
 
 int main(int argc, char* argv[]) {
-	unsigned int num; 
+	unsigned int num;
 
 	if (argc < 2) {
 		cerr << "Usage: comparer.exe <query number>" << endl;
