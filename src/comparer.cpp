@@ -7,6 +7,7 @@
 #include <optional>
 #include <mutex>
 #include <functional>
+#include <array>
 
 using namespace std;
 
@@ -164,8 +165,8 @@ static void do_compare(unsigned int num) {
 		if (!sq.fetch_row())
 			throw runtime_error("Unable to find entry in Comparer.queries");
 
-		q1 = sq[0];
-		q2 = sq[1];
+		q1 = (string)sq[0];
+		q2 = (string)sq[1];
 	}
 
 	bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
@@ -362,7 +363,7 @@ END
 					v.push_back({r.query, r.primary_key, r.change == change::added ? "added" : (r.change == change::removed ? "removed" : "modified"), r.col, r.value1, r.value2, r.col_name});
 				}
 
-				tds.bcp(u"Comparer.results", { u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, v);
+				tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, v);
 
 				tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
 
@@ -387,7 +388,7 @@ END
 				v.push_back({r.query, r.primary_key, r.change == change::added ? "added" : (r.change == change::removed ? "removed" : "modified"), r.col, r.value1, r.value2, r.col_name});
 			}
 
-			tds.bcp(u"Comparer.results", { u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, v);
+			tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, v);
 		}
 
 		tds.run("UPDATE Comparer.log SET success=1, rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE(), error=NULL WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
