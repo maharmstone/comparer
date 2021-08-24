@@ -286,6 +286,129 @@ ORDER BY columns.column_id)", object_id);
 	}
 }
 
+static int compare_strings(const u16string_view& val1, const u16string_view& val2, const tds::collation& coll) {
+	// FIXME - constexpr static_asserts for binary collations?
+
+	if (val1 == val2)
+		return 0;
+
+	if (val1.empty())
+		return -1;
+
+	if (val2.empty())
+		return 1;
+
+	if (coll.binary2) {
+		auto sv1 = val1;
+		auto sv2 = val2;
+
+		while (!sv1.empty() && !sv2.empty()) {
+			if (sv1.front() < sv2.front())
+				return -1;
+			else if (sv1.front() > sv2.front())
+				return 1;
+
+			sv1.remove_prefix(1);
+			sv2.remove_prefix(1);
+		}
+
+		if (sv1.empty() && sv2.empty())
+			return 0;
+		else if (sv1.empty())
+			return -1;
+		else
+			return 1;
+	}
+
+	if (coll.binary) { // yes, this makes no sense
+		if (val1.front() < val2.front())
+			return -1;
+		else if (val1.front() > val2.front())
+			return 1;
+
+		auto sv1 = basic_string_view<uint8_t>{(uint8_t*)&val1[1], (val1.length() * sizeof(char16_t)) - 1};
+		auto sv2 = basic_string_view<uint8_t>{(uint8_t*)&val2[1], (val2.length() * sizeof(char16_t)) - 1};
+
+		while (!sv1.empty() && !sv2.empty()) {
+			if (sv1.front() < sv2.front())
+				return -1;
+			else if (sv1.front() > sv2.front())
+				return 1;
+
+			sv1.remove_prefix(1);
+			sv2.remove_prefix(1);
+		}
+
+		if (sv1.empty() && sv2.empty())
+			return 0;
+		else if (sv1.empty())
+			return -1;
+		else
+			return 1;
+	}
+
+	// FIXME - compare according to collations
+
+	fmt::print("lcid = {}, ignore_case = {}, ignore_accent = {}, ignore_width = {}, ignore_kana = {}, binary = {}, binary2 = {}, utf8 = {}, version = {}, sort_id = {}\n",
+			    coll.lcid, coll.ignore_case, coll.ignore_accent, coll.ignore_width, coll.ignore_kana,
+				coll.binary, coll.binary2, coll.utf8, coll.version, coll.sort_id);
+
+	throw runtime_error("FIXME - compare strings");
+
+	return 0;
+}
+
+#if 0
+static void test_compare_strings() {
+	static const vector<u16string> vec = {
+		u"MC",
+		u"M\u013d",
+		u"M\U0001f32d",
+		u"\U0001f32d",
+		u"\ufb00",
+	};
+
+	auto vec2 = vec;
+
+	tds::collation coll;
+
+	// Latin1_General_100_BIN
+	coll.lcid = 1033;
+	coll.ignore_case = false;
+	coll.ignore_accent = false;
+	coll.ignore_width = false;
+	coll.ignore_kana = false;
+	coll.binary = true;
+	coll.binary2 = false;
+	coll.utf8 = false;
+	coll.version = 2;
+
+	sort(vec2.begin(), vec2.end(), [&](const u16string& a, const u16string& b) -> bool {
+		return compare_strings(a, b, coll) == -1;
+	});
+
+	// should be M🌭, MĽ, MC, 🌭, ﬀ
+	for (const auto& v : vec2) {
+		fmt::print("{}\n", tds::utf16_to_utf8(v));
+	}
+
+	vec2 = vec;
+
+	// Latin1_General_100_BIN2
+	coll.binary = false;
+	coll.binary2 = true;
+
+	sort(vec2.begin(), vec2.end(), [&](const u16string& a, const u16string& b) -> bool {
+		return compare_strings(a, b, coll) == -1;
+	});
+
+	// should be MC, MĽ, M🌭, 🌭, ﬀ
+	for (const auto& v : vec2) {
+		fmt::print("{}\n", tds::utf16_to_utf8(v));
+	}
+}
+#endif
+
 static int compare_value(const tds::column& val1, const tds::column& val2) {
 	switch (val1.type) {
 		case tds::sql_type::INTN:
@@ -312,8 +435,22 @@ static int compare_value(const tds::column& val1, const tds::column& val2) {
 			return v1 < v2 ? -1 : 1;
 		}
 
+		case tds::sql_type::VARCHAR:
+		case tds::sql_type::CHAR:
+		case tds::sql_type::NVARCHAR:
+		case tds::sql_type::NCHAR:
+		case tds::sql_type::TEXT:
+		case tds::sql_type::NTEXT:
+		case tds::sql_type::XML: {
+			auto v1 = (u16string)val1;
+			auto v2 = (u16string)val2;
+
+			// FIXME - collation for XML?
+
+			return compare_strings(v1, v2, val1.coll);
+		}
+
 		// FIXME - IMAGE
-		// FIXME - TEXT
 		// FIXME - UNIQUEIDENTIFIER
 		// FIXME - TIME
 		// FIXME - DATETIME2
@@ -325,7 +462,6 @@ static int compare_value(const tds::column& val1, const tds::column& val2) {
 		// FIXME - DATETIME
 		// FIXME - FLOAT
 		// FIXME - SQL_VARIANT
-		// FIXME - NTEXT
 		// FIXME - BITN
 		// FIXME - DECIMAL
 		// FIXME - NUMERIC
@@ -334,13 +470,8 @@ static int compare_value(const tds::column& val1, const tds::column& val2) {
 		// FIXME - DATETIMN
 		// FIXME - SMALLMONEY
 		// FIXME - VARBINARY
-		// FIXME - VARCHAR
 		// FIXME - BINARY
-		// FIXME - CHAR
-		// FIXME - NVARCHAR
-		// FIXME - NCHAR
 		// FIXME - UDT
-		// FIXME - XML
 
 		default:
 			throw formatted_error("Comparison for type {} unimplemented.", val1.type);
@@ -683,6 +814,10 @@ int main(int argc, char* argv[]) {
 		cerr << "Usage: comparer.exe <query number>" << endl;
 		return 1;
 	}
+
+#if 0
+	test_compare_strings();
+#endif
 
 	try {
 		num = stoul(argv[1]);
