@@ -140,13 +140,6 @@ public:
 
 			auto num_col = sq.num_columns();
 
-			for (uint16_t i = 0; i < num_col; i++) {
-				if (sq[i].name.empty())
-					col_names.emplace_back(nullptr);
-				else
-					col_names.emplace_back(sq[i].name);
-			}
-
 			if (b) {
 				do {
 					size_t num_res;
@@ -198,10 +191,9 @@ public:
 	tds::tds tds;
 	thread t;
 	exception_ptr ex;
-	list<vector<tds::value>> results;
+	list<vector<tds::column>> results;
 	mutex lock;
 	win_event event;
-	vector<tds::value> col_names;
 };
 
 static void create_queries(tds::tds& tds, const string_view& tbl1, const string_view& tbl2,
@@ -294,7 +286,7 @@ ORDER BY columns.column_id)", object_id);
 	}
 }
 
-static int compare_value(const tds::value& val1, const tds::value& val2) {
+static int compare_value(const tds::column& val1, const tds::column& val2) {
 	switch (val1.type) {
 		case tds::sql_type::INTN:
 		case tds::sql_type::TINYINT:
@@ -355,7 +347,7 @@ static int compare_value(const tds::value& val1, const tds::value& val2) {
 	}
 }
 
-static int compare_pks(const vector<tds::value>& row1, const vector<tds::value>& row2, unsigned int pk_columns) {
+static int compare_pks(const vector<tds::column>& row1, const vector<tds::column>& row2, unsigned int pk_columns) {
 	for (unsigned int i = 0; i < pk_columns; i++) {
 		auto ret = compare_value(row1[i], row2[i]);
 
@@ -366,7 +358,7 @@ static int compare_pks(const vector<tds::value>& row1, const vector<tds::value>&
 	return 0;
 }
 
-static string make_pk_string(const vector<tds::value>& row, unsigned int pk_columns) {
+static string make_pk_string(const vector<tds::column>& row, unsigned int pk_columns) {
 	string ret;
 
 	for (unsigned int i = 0; i < pk_columns; i++) {
@@ -427,9 +419,8 @@ static void do_compare(unsigned int num) {
 	}
 
 	bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
-	vector<tds::value> row1, row2;
-	list<vector<tds::value>> rows1, rows2;
-	vector<tds::value> col_names;
+	vector<tds::column> row1, row2;
+	list<vector<tds::column>> rows1, rows2;
 
 	sql_thread t1(q1);
 	sql_thread t2(q2);
@@ -492,8 +483,6 @@ static void do_compare(unsigned int num) {
 		t1_fetch();
 		t2_fetch();
 
-		col_names = t1.col_names;
-
 		{
 			tds::query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) VALUES(GETDATE(), ?, 0, 'Interrupted.'); SELECT SCOPE_IDENTITY()", num);
 
@@ -537,7 +526,7 @@ END
 							if (pk.empty())
 								pk = make_pk_string(row1, pk_columns);
 
-							res.emplace_back(num, pk, change::modified, i + 1, v1, v2, col_names[i]);
+							res.emplace_back(num, pk, change::modified, i + 1, v1, v2, v1.name);
 							changed = true;
 						}
 					}
@@ -557,9 +546,9 @@ END
 						const auto& v1 = row1[i];
 
 						if (v1.is_null)
-							res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, col_names[i]);
+							res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, v1.name);
 						else
-							res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, col_names[i]);
+							res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, v1.name);
 					}
 
 					removed_rows++;
@@ -573,9 +562,9 @@ END
 						const auto& v2 = row2[i];
 
 						if (v2.is_null)
-							res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, col_names[i]);
+							res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, v2.name);
 						else
-							res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, col_names[i]);
+							res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, v2.name);
 					}
 
 					added_rows++;
@@ -590,9 +579,9 @@ END
 					const auto& v1 = row1[i];
 
 					if (v1.is_null)
-						res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, col_names[i]);
+						res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, v1.name);
 					else
-						res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, col_names[i]);
+						res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, v1.name);
 				}
 
 				removed_rows++;
@@ -606,9 +595,9 @@ END
 					const auto& v2 = row2[i];
 
 					if (v2.is_null)
-						res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, col_names[i]);
+						res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, v2.name);
 					else
-						res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, col_names[i]);
+						res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, v2.name);
 				}
 
 				added_rows++;
