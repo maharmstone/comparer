@@ -189,10 +189,11 @@ public:
 };
 
 static void create_queries(tds::tds& tds, const string_view& tbl1, const string_view& tbl2,
-						   string& q1, string& q2) {
+						   string& q1, string& q2, unsigned int& pk_columns) {
 	vector<string> cols;
 	int64_t object_id;
-	unsigned int num_pk_columns = 0;
+
+	pk_columns = 0;
 
 	// FIXME - extract prefix if three- or four-part name
 
@@ -215,7 +216,7 @@ ORDER BY index_columns.index_column_id)", object_id);
 
 		while (sq.fetch_row()) {
 			cols.emplace_back(tds::escape((string)sq[0]));
-			num_pk_columns++;
+			pk_columns++;
 		}
 	}
 
@@ -266,7 +267,7 @@ ORDER BY columns.column_id)", object_id);
 	q2 += tbl2;
 	q2 += " ORDER BY ";
 
-	for (unsigned int i = 0; i < num_pk_columns; i++) {
+	for (unsigned int i = 0; i < pk_columns; i++) {
 		if (i != 0) {
 			q1 += ", ";
 			q2 += ", ";
@@ -277,6 +278,44 @@ ORDER BY columns.column_id)", object_id);
 	}
 }
 
+static int compare_pks(const vector<tds::value>& row1, const vector<tds::value>& row2, unsigned int pk_columns) {
+	for (unsigned int i = 0; i < pk_columns; i++) {
+		switch (row1[i].type) {
+			case tds::sql_type::INTN:
+			case tds::sql_type::TINYINT:
+			case tds::sql_type::SMALLINT:
+			case tds::sql_type::INT:
+			case tds::sql_type::BIGINT: {
+				auto v1 = (int64_t)row1[i];
+				auto v2 = (int64_t)row2[i];
+
+				if (v1 == v2)
+					continue;
+
+				return v1 < v2 ? -1 : 1;
+			}
+
+			default:
+				throw runtime_error("Comparison for type " + to_string((int)row1[i].type) + " unimplemented.");
+		}
+	}
+
+	return 0;
+}
+
+static string make_pk_string(const vector<tds::value>& row, unsigned int pk_columns) {
+	string ret;
+
+	for (unsigned int i = 0; i < pk_columns; i++) {
+		if (i != 0)
+			ret += ",";
+
+		ret += (string)row[i];
+	}
+
+	return ret;
+}
+
 static void do_compare(unsigned int num) {
 	unsigned int num_rows1 = 0, num_rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0, rows_since_update = 0;
 	list<result> res;
@@ -284,6 +323,7 @@ static void do_compare(unsigned int num) {
 	tds::tds tds(db_server, db_username, db_password, DB_APP);
 
 	string q1, q2;
+	unsigned int pk_columns;
 
 	{
 		optional<tds::query> sq2(in_place, tds, "SELECT type, query1, query2, table1, table2 FROM Comparer.queries WHERE id=?", num);
@@ -304,6 +344,8 @@ static void do_compare(unsigned int num) {
 
 			q1 = (string)sq[1];
 			q2 = (string)sq[2];
+
+			pk_columns = 1;
 		} else if (type == "table") {
 			if (sq[3].is_null)
 				throw runtime_error("table1 is NULL");
@@ -316,7 +358,7 @@ static void do_compare(unsigned int num) {
 
 			sq2.reset();
 
-			create_queries(tds, tbl1, tbl2, q1, q2);
+			create_queries(tds, tbl1, tbl2, q1, q2, pk_columns);
 		} else
 			throw runtime_error("Unsupported type " + type + ".");
 	}
@@ -416,18 +458,23 @@ END
 
 		while (!t1_finished || !t2_finished) {
 			if (!t1_finished && !t2_finished) {
-				const auto& pk1 = (string)row1[0];
-				const auto& pk2 = (string)row2[0];
+				auto cmp = compare_pks(row1, row2, pk_columns);
 
-				if (pk1 == pk2) {
+				// FIXME - what about tables made up solely of primary key?
+
+				if (cmp == 0) {
 					bool changed = false;
+					string pk;
 
-					for (unsigned int i = 1; i < row1.size(); i++) {
+					for (unsigned int i = pk_columns; i < row1.size(); i++) {
 						const auto& v1 = row1[i];
 						const auto& v2 = row2[i];
 
 						if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && (string)v1 != (string)v2)) {
-							res.emplace_back(num, pk1, change::modified, i + 1, v1, v2, col_names[i]);
+							if (pk.empty())
+								pk = make_pk_string(row1, pk_columns);
+
+							res.emplace_back(num, pk, change::modified, i + 1, v1, v2, col_names[i]);
 							changed = true;
 						}
 					}
@@ -440,14 +487,16 @@ END
 
 					t1_fetch();
 					t2_fetch();
-				} else if (pk1 < pk2) {
-					for (unsigned int i = 1; i < row1.size(); i++) {
+				} else if (cmp < 0) {
+					const auto& pk = make_pk_string(row1, pk_columns);
+
+					for (unsigned int i = pk_columns; i < row1.size(); i++) {
 						const auto& v1 = row1[i];
 
 						if (v1.is_null)
-							res.emplace_back(num, pk1, change::removed, i + 1, nullptr, nullptr, col_names[i]);
+							res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, col_names[i]);
 						else
-							res.emplace_back(num, pk1, change::removed, i + 1, (string)v1, nullptr, col_names[i]);
+							res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, col_names[i]);
 					}
 
 					removed_rows++;
@@ -455,13 +504,15 @@ END
 
 					t1_fetch();
 				} else {
-					for (unsigned int i = 1; i < row2.size(); i++) {
+					const auto& pk = make_pk_string(row2, pk_columns);
+
+					for (unsigned int i = pk_columns; i < row2.size(); i++) {
 						const auto& v2 = row2[i];
 
 						if (v2.is_null)
-							res.emplace_back(num, pk2, change::added, i + 1, nullptr, nullptr, col_names[i]);
+							res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, col_names[i]);
 						else
-							res.emplace_back(num, pk2, change::added, i + 1, nullptr, (string)v2, col_names[i]);
+							res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, col_names[i]);
 					}
 
 					added_rows++;
@@ -470,15 +521,15 @@ END
 					t2_fetch();
 				}
 			} else if (!t1_finished) {
-				const auto& pk1 = (string)row1[0];
+				const auto& pk = make_pk_string(row1, pk_columns);
 
 				for (unsigned int i = 1; i < row1.size(); i++) {
 					const auto& v1 = row1[i];
 
 					if (v1.is_null)
-						res.emplace_back(num, pk1, change::removed, i + 1, nullptr, nullptr, col_names[i]);
+						res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, col_names[i]);
 					else
-						res.emplace_back(num, pk1, change::removed, i + 1, (string)v1, nullptr, col_names[i]);
+						res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, col_names[i]);
 				}
 
 				removed_rows++;
@@ -486,15 +537,15 @@ END
 
 				t1_fetch();
 			} else {
-				const auto& pk2 = (string)row2[0];
+				const auto& pk = make_pk_string(row2, pk_columns);
 
 				for (unsigned int i = 1; i < row2.size(); i++) {
 					const auto& v2 = row2[i];
 
 					if (v2.is_null)
-						res.emplace_back(num, pk2, change::added, i + 1, nullptr, nullptr, col_names[i]);
+						res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, col_names[i]);
 					else
-						res.emplace_back(num, pk2, change::added, i + 1, nullptr, (string)v2, col_names[i]);
+						res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, col_names[i]);
 				}
 
 				added_rows++;
