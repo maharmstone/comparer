@@ -312,7 +312,7 @@ static int compare_pks(const vector<tds::value>& row1, const vector<tds::value>&
 			}
 
 			default:
-				throw formatted_error("Comparison for type {} unimplemented.", row1[i].type);
+				throw formatted_error("Comparison for type {} unimplemented (column {}).", row1[i].type, i);
 		}
 	}
 
