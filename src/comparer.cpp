@@ -321,6 +321,36 @@ static int compare_pks(const vector<tds::value>& row1, const vector<tds::value>&
 				return v1 < v2 ? -1 : 1;
 			}
 
+			// FIXME - IMAGE
+			// FIXME - TEXT
+			// FIXME - UNIQUEIDENTIFIER
+			// FIXME - TIME
+			// FIXME - DATETIME2
+			// FIXME - DATETIMEOFFSET
+			// FIXME - BIT
+			// FIXME - DATETIM4
+			// FIXME - REAL
+			// FIXME - MONEY
+			// FIXME - DATETIME
+			// FIXME - FLOAT
+			// FIXME - SQL_VARIANT
+			// FIXME - NTEXT
+			// FIXME - BITN
+			// FIXME - DECIMAL
+			// FIXME - NUMERIC
+			// FIXME - FLTN
+			// FIXME - MONEYN
+			// FIXME - DATETIMN
+			// FIXME - SMALLMONEY
+			// FIXME - VARBINARY
+			// FIXME - VARCHAR
+			// FIXME - BINARY
+			// FIXME - CHAR
+			// FIXME - NVARCHAR
+			// FIXME - NCHAR
+			// FIXME - UDT
+			// FIXME - XML
+
 			default:
 				throw formatted_error("Comparison for type {} unimplemented (column {}).", row1[i].type, i);
 		}
