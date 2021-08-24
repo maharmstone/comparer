@@ -287,6 +287,8 @@ ORDER BY columns.column_id)", object_id);
 }
 
 static int compare_strings(const u16string_view& val1, const u16string_view& val2, const tds::collation& coll) {
+	DWORD flags;
+
 	// FIXME - constexpr static_asserts for binary collations?
 
 	if (val1 == val2)
@@ -347,15 +349,21 @@ static int compare_strings(const u16string_view& val1, const u16string_view& val
 			return 1;
 	}
 
-	// FIXME - compare according to collations
+	flags = 0;
 
-	fmt::print("lcid = {}, ignore_case = {}, ignore_accent = {}, ignore_width = {}, ignore_kana = {}, binary = {}, binary2 = {}, utf8 = {}, version = {}, sort_id = {}\n",
-			    coll.lcid, coll.ignore_case, coll.ignore_accent, coll.ignore_width, coll.ignore_kana,
-				coll.binary, coll.binary2, coll.utf8, coll.version, coll.sort_id);
+	if (coll.ignore_case)
+		flags |= LINGUISTIC_IGNORECASE;
 
-	throw runtime_error("FIXME - compare strings");
+	if (coll.ignore_accent)
+		flags |= LINGUISTIC_IGNOREDIACRITIC;
 
-	return 0;
+	if (coll.ignore_width)
+		flags |= NORM_IGNOREWIDTH;
+
+	if (coll.ignore_kana)
+		flags |= NORM_IGNOREKANATYPE;
+
+	return CompareStringW(coll.lcid, flags, (WCHAR*)val1.data(), (int)val1.length(), (WCHAR*)val2.data(), (int)val2.length()) - 2;
 }
 
 #if 0
