@@ -14,8 +14,10 @@ add_executable(comparer ${SRC_FILES})
 add_definitions(-D_WIN32_WINNT=0x0602 -DNOMINMAX)
 
 find_package(tdscpp REQUIRED)
+find_package(fmt REQUIRED)
 
 target_link_libraries(comparer tdscpp)
+target_link_libraries(comparer fmt::fmt-header-only)
 
 if(NOT MSVC)
     target_compile_options(comparer PUBLIC -Wall -Werror=cast-function-type -Wno-expansion-to-defined -Wunused-parameter -Wtype-limits -Wextra -Wconversion -Wnoexcept)

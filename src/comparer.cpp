@@ -8,6 +8,8 @@
 #include <mutex>
 #include <functional>
 #include <array>
+#include <fmt/format.h>
+#include <fmt/compile.h>
 
 using namespace std;
 
@@ -60,6 +62,23 @@ private:
 	std::string msg;
 };
 
+class _formatted_error : public std::exception {
+public:
+	template<typename T, typename... Args>
+	_formatted_error(const T& s, Args&&... args) {
+		msg = fmt::format(s, std::forward<Args>(args)...);
+	}
+
+	const char* what() const noexcept {
+		return msg.c_str();
+	}
+
+private:
+	std::string msg;
+};
+
+#define formatted_error(s, ...) _formatted_error(FMT_COMPILE(s), ##__VA_ARGS__)
+
 class result {
 public:
 	result(int query, const string& primary_key, enum change change, unsigned int col,
@@ -95,7 +114,7 @@ public:
 		auto ret = WaitForSingleObject(h, INFINITE);
 
 		if (ret != WAIT_OBJECT_0)
-			throw runtime_error("CreateEvent returned " + to_string(ret) + ".");
+			throw formatted_error("CreateEvent returned {}.", ret);
 	}
 
 private:
@@ -201,7 +220,7 @@ static void create_queries(tds::tds& tds, const string_view& tbl1, const string_
 		tds::query sq(tds, "SELECT OBJECT_ID(?)", tbl1);
 
 		if (!sq.fetch_row() || sq[0].is_null)
-			throw runtime_error("Could not get object ID for " + string(tbl1) + ".");
+			throw formatted_error("Could not get object ID for {}.", tbl1);
 
 		object_id = (int64_t)sq[0];
 	}
@@ -221,7 +240,7 @@ ORDER BY index_columns.index_column_id)", object_id);
 	}
 
 	if (cols.empty())
-		throw runtime_error("No primary key found for " + string(tbl1) + ".");
+		throw formatted_error("No primary key found for {}.", tbl1);
 
 	{
 		tds::query sq(tds, R"(SELECT columns.name
@@ -239,7 +258,7 @@ ORDER BY columns.column_id)", object_id);
 	// FIXME - PKs with DESC element?
 
 	if (cols.empty())
-		throw runtime_error("No columns returned for " + string(tbl1) + ".");
+		throw formatted_error("No columns returned for {}.", tbl1);
 
 	// FIXME - skip "Data Load Date" etc.
 
@@ -296,7 +315,7 @@ static int compare_pks(const vector<tds::value>& row1, const vector<tds::value>&
 			}
 
 			default:
-				throw runtime_error("Comparison for type " + to_string((int)row1[i].type) + " unimplemented.");
+				throw formatted_error("Comparison for type {} unimplemented.", row1[i].type);
 		}
 	}
 
@@ -360,7 +379,7 @@ static void do_compare(unsigned int num) {
 
 			create_queries(tds, tbl1, tbl2, q1, q2, pk_columns);
 		} else
-			throw runtime_error("Unsupported type " + type + ".");
+			throw formatted_error("Unsupported type {}.", type);
 	}
 
 	bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
