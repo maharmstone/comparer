@@ -294,66 +294,73 @@ ORDER BY columns.column_id)", object_id);
 	}
 }
 
+static int compare_value(const tds::value& val1, const tds::value& val2) {
+	switch (val1.type) {
+		case tds::sql_type::INTN:
+		case tds::sql_type::TINYINT:
+		case tds::sql_type::SMALLINT:
+		case tds::sql_type::INT:
+		case tds::sql_type::BIGINT: {
+			auto v1 = (int64_t)val1;
+			auto v2 = (int64_t)val2;
+
+			if (v1 == v2)
+				return 0;
+
+			return v1 < v2 ? -1 : 1;
+		}
+
+		case tds::sql_type::DATE: {
+			auto v1 = (chrono::year_month_day)val1;
+			auto v2 = (chrono::year_month_day)val2;
+
+			if (v1 == v2)
+				return 0;
+
+			return v1 < v2 ? -1 : 1;
+		}
+
+		// FIXME - IMAGE
+		// FIXME - TEXT
+		// FIXME - UNIQUEIDENTIFIER
+		// FIXME - TIME
+		// FIXME - DATETIME2
+		// FIXME - DATETIMEOFFSET
+		// FIXME - BIT
+		// FIXME - DATETIM4
+		// FIXME - REAL
+		// FIXME - MONEY
+		// FIXME - DATETIME
+		// FIXME - FLOAT
+		// FIXME - SQL_VARIANT
+		// FIXME - NTEXT
+		// FIXME - BITN
+		// FIXME - DECIMAL
+		// FIXME - NUMERIC
+		// FIXME - FLTN
+		// FIXME - MONEYN
+		// FIXME - DATETIMN
+		// FIXME - SMALLMONEY
+		// FIXME - VARBINARY
+		// FIXME - VARCHAR
+		// FIXME - BINARY
+		// FIXME - CHAR
+		// FIXME - NVARCHAR
+		// FIXME - NCHAR
+		// FIXME - UDT
+		// FIXME - XML
+
+		default:
+			throw formatted_error("Comparison for type {} unimplemented.", val1.type);
+	}
+}
+
 static int compare_pks(const vector<tds::value>& row1, const vector<tds::value>& row2, unsigned int pk_columns) {
 	for (unsigned int i = 0; i < pk_columns; i++) {
-		switch (row1[i].type) {
-			case tds::sql_type::INTN:
-			case tds::sql_type::TINYINT:
-			case tds::sql_type::SMALLINT:
-			case tds::sql_type::INT:
-			case tds::sql_type::BIGINT: {
-				auto v1 = (int64_t)row1[i];
-				auto v2 = (int64_t)row2[i];
+		auto ret = compare_value(row1[i], row2[i]);
 
-				if (v1 == v2)
-					continue;
-
-				return v1 < v2 ? -1 : 1;
-			}
-
-			case tds::sql_type::DATE: {
-				auto v1 = (chrono::year_month_day)row1[i];
-				auto v2 = (chrono::year_month_day)row2[i];
-
-				if (v1 == v2)
-					continue;
-
-				return v1 < v2 ? -1 : 1;
-			}
-
-			// FIXME - IMAGE
-			// FIXME - TEXT
-			// FIXME - UNIQUEIDENTIFIER
-			// FIXME - TIME
-			// FIXME - DATETIME2
-			// FIXME - DATETIMEOFFSET
-			// FIXME - BIT
-			// FIXME - DATETIM4
-			// FIXME - REAL
-			// FIXME - MONEY
-			// FIXME - DATETIME
-			// FIXME - FLOAT
-			// FIXME - SQL_VARIANT
-			// FIXME - NTEXT
-			// FIXME - BITN
-			// FIXME - DECIMAL
-			// FIXME - NUMERIC
-			// FIXME - FLTN
-			// FIXME - MONEYN
-			// FIXME - DATETIMN
-			// FIXME - SMALLMONEY
-			// FIXME - VARBINARY
-			// FIXME - VARCHAR
-			// FIXME - BINARY
-			// FIXME - CHAR
-			// FIXME - NVARCHAR
-			// FIXME - NCHAR
-			// FIXME - UDT
-			// FIXME - XML
-
-			default:
-				throw formatted_error("Comparison for type {} unimplemented (column {}).", row1[i].type, i);
-		}
+		if (ret != 0)
+			return ret;
 	}
 
 	return 0;
@@ -526,7 +533,7 @@ END
 						const auto& v1 = row1[i];
 						const auto& v2 = row2[i];
 
-						if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && (string)v1 != (string)v2)) {
+						if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && compare_value(v1, v2))) {
 							if (pk.empty())
 								pk = make_pk_string(row1, pk_columns);
 
