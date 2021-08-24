@@ -311,6 +311,16 @@ static int compare_pks(const vector<tds::value>& row1, const vector<tds::value>&
 				return v1 < v2 ? -1 : 1;
 			}
 
+			case tds::sql_type::DATE: {
+				auto v1 = (chrono::year_month_day)row1[i];
+				auto v2 = (chrono::year_month_day)row2[i];
+
+				if (v1 == v2)
+					continue;
+
+				return v1 < v2 ? -1 : 1;
+			}
+
 			default:
 				throw formatted_error("Comparison for type {} unimplemented (column {}).", row1[i].type, i);
 		}
