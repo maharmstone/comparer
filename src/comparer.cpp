@@ -170,10 +170,7 @@ public:
 						v.reserve(num_col);
 
 						for (uint16_t i = 0; i < num_col; i++) {
-							if (sq[i].is_null)
-								v.emplace_back(nullptr);
-							else
-								v.emplace_back((string)sq[i]);
+							v.emplace_back(sq[i]);
 						}
 					}
 
