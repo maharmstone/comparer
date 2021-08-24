@@ -190,8 +190,91 @@ public:
 
 static void create_queries(tds::tds& tds, const string_view& tbl1, const string_view& tbl2,
 						   string& q1, string& q2) {
-	// FIXME
-	throw runtime_error("FIXME - create_queries");
+	vector<string> cols;
+	int64_t object_id;
+	unsigned int num_pk_columns = 0;
+
+	// FIXME - extract prefix if three- or four-part name
+
+	{
+		tds::query sq(tds, "SELECT OBJECT_ID(?)", tbl1);
+
+		if (!sq.fetch_row() || sq[0].is_null)
+			throw runtime_error("Could not get object ID for " + string(tbl1) + ".");
+
+		object_id = (int64_t)sq[0];
+	}
+
+	{
+		tds::query sq(tds, R"(SELECT columns.name
+FROM sys.index_columns
+JOIN sys.indexes ON indexes.object_id = index_columns.object_id AND indexes.index_id = index_columns.index_id
+JOIN sys.columns ON columns.object_id = index_columns.object_id AND columns.column_id = index_columns.column_id
+WHERE index_columns.object_id = ? AND indexes.is_primary_key = 1
+ORDER BY index_columns.index_column_id)", object_id);
+
+		while (sq.fetch_row()) {
+			cols.emplace_back(tds::escape((string)sq[0]));
+			num_pk_columns++;
+		}
+	}
+
+	if (cols.empty())
+		throw runtime_error("No primary key found for " + string(tbl1) + ".");
+
+	{
+		tds::query sq(tds, R"(SELECT columns.name
+FROM sys.columns
+JOIN sys.indexes ON indexes.object_id = columns.object_id AND indexes.is_primary_key = 1
+LEFT JOIN sys.index_columns ON index_columns.object_id = columns.object_id AND index_columns.index_id = indexes.index_id AND index_columns.column_id = columns.column_id
+WHERE columns.object_id = ? AND index_columns.column_id IS NULL
+ORDER BY columns.column_id)", object_id);
+
+		while (sq.fetch_row()) {
+			cols.emplace_back(tds::escape((string)sq[0]));
+		}
+	}
+
+	// FIXME - PKs with DESC element?
+
+	if (cols.empty())
+		throw runtime_error("No columns returned for " + string(tbl1) + ".");
+
+	// FIXME - skip "Data Load Date" etc.
+
+	for (const auto& col : cols) {
+		if (q1.empty())
+			q1 = "SELECT ";
+		else
+			q1 += ", ";
+
+		q1 += col;
+
+		if (q2.empty())
+			q2 = "SELECT ";
+		else
+			q2 += ", ";
+
+		q2 += col;
+	}
+
+	q1 += " FROM ";
+	q1 += tbl1;
+	q1 += " ORDER BY ";
+
+	q2 += " FROM ";
+	q2 += tbl2;
+	q2 += " ORDER BY ";
+
+	for (unsigned int i = 0; i < num_pk_columns; i++) {
+		if (i != 0) {
+			q1 += ", ";
+			q2 += ", ";
+		}
+
+		q1 += cols[i];
+		q2 += cols[i];
+	}
 }
 
 static void do_compare(unsigned int num) {
@@ -203,7 +286,9 @@ static void do_compare(unsigned int num) {
 	string q1, q2;
 
 	{
-		tds::query sq(tds, "SELECT type, query1, query2, table1, table2 FROM Comparer.queries WHERE id=?", num);
+		optional<tds::query> sq2(in_place, tds, "SELECT type, query1, query2, table1, table2 FROM Comparer.queries WHERE id=?", num);
+
+		auto& sq = sq2.value();
 
 		if (!sq.fetch_row())
 			throw runtime_error("Unable to find entry in Comparer.queries");
@@ -228,6 +313,8 @@ static void do_compare(unsigned int num) {
 
 			auto tbl1 = (string)sq[3];
 			auto tbl2 = (string)sq[4];
+
+			sq2.reset();
 
 			create_queries(tds, tbl1, tbl2, q1, q2);
 		} else
