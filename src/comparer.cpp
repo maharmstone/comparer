@@ -286,215 +286,20 @@ ORDER BY columns.column_id)", object_id);
 	}
 }
 
-static int compare_strings(const u16string_view& val1, const u16string_view& val2, const tds::collation& coll) {
-	DWORD flags;
-
-	// FIXME - constexpr static_asserts for binary collations?
-
-	if (val1 == val2)
-		return 0;
-
-	if (val1.empty())
-		return -1;
-
-	if (val2.empty())
-		return 1;
-
-	if (coll.binary2) {
-		auto sv1 = val1;
-		auto sv2 = val2;
-
-		while (!sv1.empty() && !sv2.empty()) {
-			if (sv1.front() < sv2.front())
-				return -1;
-			else if (sv1.front() > sv2.front())
-				return 1;
-
-			sv1.remove_prefix(1);
-			sv2.remove_prefix(1);
-		}
-
-		if (sv1.empty() && sv2.empty())
-			return 0;
-		else if (sv1.empty())
-			return -1;
-		else
-			return 1;
-	}
-
-	if (coll.binary) { // yes, this makes no sense
-		if (val1.front() < val2.front())
-			return -1;
-		else if (val1.front() > val2.front())
-			return 1;
-
-		auto sv1 = basic_string_view<uint8_t>{(uint8_t*)&val1[1], (val1.length() * sizeof(char16_t)) - 1};
-		auto sv2 = basic_string_view<uint8_t>{(uint8_t*)&val2[1], (val2.length() * sizeof(char16_t)) - 1};
-
-		while (!sv1.empty() && !sv2.empty()) {
-			if (sv1.front() < sv2.front())
-				return -1;
-			else if (sv1.front() > sv2.front())
-				return 1;
-
-			sv1.remove_prefix(1);
-			sv2.remove_prefix(1);
-		}
-
-		if (sv1.empty() && sv2.empty())
-			return 0;
-		else if (sv1.empty())
-			return -1;
-		else
-			return 1;
-	}
-
-	flags = 0;
-
-	if (coll.ignore_case)
-		flags |= LINGUISTIC_IGNORECASE;
-
-	if (coll.ignore_accent)
-		flags |= LINGUISTIC_IGNOREDIACRITIC;
-
-	if (coll.ignore_width)
-		flags |= NORM_IGNOREWIDTH;
-
-	if (coll.ignore_kana)
-		flags |= NORM_IGNOREKANATYPE;
-
-	return CompareStringW(coll.lcid, flags, (WCHAR*)val1.data(), (int)val1.length(), (WCHAR*)val2.data(), (int)val2.length()) - 2;
-}
-
-#if 0
-static void test_compare_strings() {
-	static const vector<u16string> vec = {
-		u"MC",
-		u"M\u013d",
-		u"M\U0001f32d",
-		u"\U0001f32d",
-		u"\ufb00",
-	};
-
-	auto vec2 = vec;
-
-	tds::collation coll;
-
-	// Latin1_General_100_BIN
-	coll.lcid = 1033;
-	coll.ignore_case = false;
-	coll.ignore_accent = false;
-	coll.ignore_width = false;
-	coll.ignore_kana = false;
-	coll.binary = true;
-	coll.binary2 = false;
-	coll.utf8 = false;
-	coll.version = 2;
-
-	sort(vec2.begin(), vec2.end(), [&](const u16string& a, const u16string& b) -> bool {
-		return compare_strings(a, b, coll) == -1;
-	});
-
-	// should be M🌭, MĽ, MC, 🌭, ﬀ
-	for (const auto& v : vec2) {
-		fmt::print("{}\n", tds::utf16_to_utf8(v));
-	}
-
-	vec2 = vec;
-
-	// Latin1_General_100_BIN2
-	coll.binary = false;
-	coll.binary2 = true;
-
-	sort(vec2.begin(), vec2.end(), [&](const u16string& a, const u16string& b) -> bool {
-		return compare_strings(a, b, coll) == -1;
-	});
-
-	// should be MC, MĽ, M🌭, 🌭, ﬀ
-	for (const auto& v : vec2) {
-		fmt::print("{}\n", tds::utf16_to_utf8(v));
-	}
-}
-#endif
-
-static int compare_value(const tds::column& val1, const tds::column& val2) {
-	switch (val1.type) {
-		case tds::sql_type::INTN:
-		case tds::sql_type::TINYINT:
-		case tds::sql_type::SMALLINT:
-		case tds::sql_type::INT:
-		case tds::sql_type::BIGINT: {
-			auto v1 = (int64_t)val1;
-			auto v2 = (int64_t)val2;
-
-			if (v1 == v2)
-				return 0;
-
-			return v1 < v2 ? -1 : 1;
-		}
-
-		case tds::sql_type::DATE: {
-			auto v1 = (chrono::year_month_day)val1;
-			auto v2 = (chrono::year_month_day)val2;
-
-			if (v1 == v2)
-				return 0;
-
-			return v1 < v2 ? -1 : 1;
-		}
-
-		case tds::sql_type::VARCHAR:
-		case tds::sql_type::CHAR:
-		case tds::sql_type::NVARCHAR:
-		case tds::sql_type::NCHAR:
-		case tds::sql_type::TEXT:
-		case tds::sql_type::NTEXT:
-		case tds::sql_type::XML: {
-			auto v1 = (u16string)val1;
-			auto v2 = (u16string)val2;
-
-			// FIXME - collation for XML?
-
-			return compare_strings(v1, v2, val1.coll);
-		}
-
-		// FIXME - IMAGE
-		// FIXME - UNIQUEIDENTIFIER
-		// FIXME - TIME
-		// FIXME - DATETIME2
-		// FIXME - DATETIMEOFFSET
-		// FIXME - BIT
-		// FIXME - DATETIM4
-		// FIXME - REAL
-		// FIXME - MONEY
-		// FIXME - DATETIME
-		// FIXME - FLOAT
-		// FIXME - SQL_VARIANT
-		// FIXME - BITN
-		// FIXME - DECIMAL
-		// FIXME - NUMERIC
-		// FIXME - FLTN
-		// FIXME - MONEYN
-		// FIXME - DATETIMN
-		// FIXME - SMALLMONEY
-		// FIXME - VARBINARY
-		// FIXME - BINARY
-		// FIXME - UDT
-
-		default:
-			throw formatted_error("Comparison for type {} unimplemented.", val1.type);
-	}
-}
-
-static int compare_pks(const vector<tds::column>& row1, const vector<tds::column>& row2, unsigned int pk_columns) {
+static weak_ordering compare_pks(const vector<tds::column>& row1, const vector<tds::column>& row2, unsigned int pk_columns) {
 	for (unsigned int i = 0; i < pk_columns; i++) {
-		auto ret = compare_value(row1[i], row2[i]);
+		auto ret = row1[i] <=> row2[i];
 
-		if (ret != 0)
-			return ret;
+		if (ret == partial_ordering::unordered)
+			throw runtime_error("Unexpected partial_ordering::unordered while comparing primary keys.");
+
+		if (ret == partial_ordering::less)
+			return weak_ordering::less;
+		else if (ret == partial_ordering::greater)
+			return weak_ordering::greater;
 	}
 
-	return 0;
+	return weak_ordering::equivalent;
 }
 
 static string make_pk_string(const vector<tds::column>& row, unsigned int pk_columns) {
@@ -653,7 +458,7 @@ END
 
 				// FIXME - what about tables made up solely of primary key?
 
-				if (cmp == 0) {
+				if (cmp == weak_ordering::equivalent) {
 					bool changed = false;
 					string pk;
 
@@ -661,7 +466,7 @@ END
 						const auto& v1 = row1[i];
 						const auto& v2 = row2[i];
 
-						if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && compare_value(v1, v2))) {
+						if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && v1 != v2)) {
 							if (pk.empty())
 								pk = make_pk_string(row1, pk_columns);
 
@@ -678,7 +483,7 @@ END
 
 					t1_fetch();
 					t2_fetch();
-				} else if (cmp < 0) {
+				} else if (cmp == weak_ordering::less) {
 					const auto& pk = make_pk_string(row1, pk_columns);
 
 					for (unsigned int i = pk_columns; i < row1.size(); i++) {
@@ -822,10 +627,6 @@ int main(int argc, char* argv[]) {
 		cerr << "Usage: comparer.exe <query number>" << endl;
 		return 1;
 	}
-
-#if 0
-	test_compare_strings();
-#endif
 
 	try {
 		num = stoul(argv[1]);
