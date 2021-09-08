@@ -240,7 +240,12 @@ WHERE columns.object_id = ? AND index_columns.column_id IS NULL
 ORDER BY columns.column_id)", object_id);
 
 		while (sq.fetch_row()) {
-			cols.emplace_back(tds::escape((string)sq[0]));
+			auto s = (string)sq[0];
+
+			if (s == "Data Load Date") // FIXME - option for this?
+				continue;
+
+			cols.emplace_back(tds::escape(s));
 		}
 	}
 
@@ -248,8 +253,6 @@ ORDER BY columns.column_id)", object_id);
 
 	if (cols.empty())
 		throw formatted_error("No columns returned for {}.", tbl1);
-
-	// FIXME - skip "Data Load Date" etc.
 
 	for (const auto& col : cols) {
 		if (q1.empty())
