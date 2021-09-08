@@ -196,6 +196,69 @@ public:
 	win_event event;
 };
 
+struct object_name_parts {
+	string_view server;
+	string_view db;
+	string_view schema;
+	string_view name;
+};
+
+static object_name_parts parse_object_name(const string_view& s) {
+	bool escaped = false;
+	size_t partstart = 0;
+	vector<string_view> parts;
+
+	// FIXME - constexpr? Do without vector?
+	// FIXME - move to tdscpp(?)
+	// FIXME - also for u16string_view etc. (make into template)
+
+	for (size_t i = 0; i < s.length(); i++) {
+		if (!escaped && s[i] == '[')
+			escaped = true;
+		else if (escaped && s[i] == ']') {
+			if (i + 1 < s.length() && s[i+1] == ']') {
+				i++;
+				continue;
+			}
+
+			escaped = false;
+		} else if (!escaped && s[i] == '.') {
+			parts.emplace_back(&s[partstart], i - partstart);
+			partstart = i + 1;
+		}
+	}
+
+	parts.emplace_back(&s[partstart], s.length() - partstart);
+
+	object_name_parts onp;
+
+	switch (parts.size()) {
+		case 1:
+			onp.name = parts[0];
+		break;
+
+		case 2:
+			onp.schema = parts[0];
+			onp.name = parts[1];
+		break;
+
+		case 3:
+			onp.db = parts[0];
+			onp.schema = parts[1];
+			onp.name = parts[2];
+		break;
+
+		default:
+			onp.server = parts[0];
+			onp.db = parts[1];
+			onp.schema = parts[2];
+			onp.name = parts[3];
+		break;
+	}
+
+	return onp;
+}
+
 static void create_queries(tds::tds& tds, const string_view& tbl1, const string_view& tbl2,
 						   string& q1, string& q2, unsigned int& pk_columns) {
 	vector<string> cols;
@@ -203,10 +266,19 @@ static void create_queries(tds::tds& tds, const string_view& tbl1, const string_
 
 	pk_columns = 0;
 
-	// FIXME - extract prefix if three- or four-part name
+	auto onp = parse_object_name(tbl1);
 
 	{
-		tds::query sq(tds, "SELECT OBJECT_ID(?)", tbl1);
+		optional<tds::query> sq2;
+
+		if (!onp.server.empty())
+			sq2.emplace(tds, "SELECT " + string(onp.server) + "." + string(onp.db) +".OBJECT_ID(?)", string(onp.schema) + "." + string(onp.name));
+		else if (!onp.db.empty())
+			sq2.emplace(tds, "SELECT " + string(onp.db) +".OBJECT_ID(?)", string(onp.schema) + "." + string(onp.name));
+		else
+			sq2.emplace(tds, "SELECT OBJECT_ID(?)", tbl1);
+
+		auto& sq = sq2.value();
 
 		if (!sq.fetch_row() || sq[0].is_null)
 			throw formatted_error("Could not get object ID for {}.", tbl1);
@@ -214,11 +286,18 @@ static void create_queries(tds::tds& tds, const string_view& tbl1, const string_
 		object_id = (int64_t)sq[0];
 	}
 
+	string prefix;
+
+	if (!onp.server.empty())
+		prefix = string(onp.server) + "." + string(onp.db) + ".";
+	else if (!onp.db.empty())
+		prefix = string(onp.db) + ".";
+
 	{
 		tds::query sq(tds, R"(SELECT columns.name
-FROM sys.index_columns
-JOIN sys.indexes ON indexes.object_id = index_columns.object_id AND indexes.index_id = index_columns.index_id
-JOIN sys.columns ON columns.object_id = index_columns.object_id AND columns.column_id = index_columns.column_id
+FROM )" + prefix + R"(sys.index_columns
+JOIN )" + prefix + R"(sys.indexes ON indexes.object_id = index_columns.object_id AND indexes.index_id = index_columns.index_id
+JOIN )" + prefix + R"(sys.columns ON columns.object_id = index_columns.object_id AND columns.column_id = index_columns.column_id
 WHERE index_columns.object_id = ? AND indexes.is_primary_key = 1
 ORDER BY index_columns.index_column_id)", object_id);
 
@@ -233,9 +312,9 @@ ORDER BY index_columns.index_column_id)", object_id);
 
 	{
 		tds::query sq(tds, R"(SELECT columns.name
-FROM sys.columns
-JOIN sys.indexes ON indexes.object_id = columns.object_id AND indexes.is_primary_key = 1
-LEFT JOIN sys.index_columns ON index_columns.object_id = columns.object_id AND index_columns.index_id = indexes.index_id AND index_columns.column_id = columns.column_id
+FROM )" + prefix + R"(sys.columns
+JOIN )" + prefix + R"(sys.indexes ON indexes.object_id = columns.object_id AND indexes.is_primary_key = 1
+LEFT JOIN )" + prefix + R"(sys.index_columns ON index_columns.object_id = columns.object_id AND index_columns.index_id = indexes.index_id AND index_columns.column_id = columns.column_id
 WHERE columns.object_id = ? AND index_columns.column_id IS NULL
 ORDER BY columns.column_id)", object_id);
 
