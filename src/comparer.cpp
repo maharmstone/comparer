@@ -205,14 +205,23 @@ static void create_queries(tds::tds& tds, const string_view& tbl1, const string_
 
 	auto onp = tds::parse_object_name(tbl1);
 
+	string prefix;
+
+	if (!onp.server.empty())
+		prefix = string(onp.server) + "." + string(onp.db) + ".";
+	else if (!onp.db.empty())
+		prefix = string(onp.db) + ".";
+
 	{
 		optional<tds::query> sq2;
 
-		if (!onp.server.empty())
-			sq2.emplace(tds, "SELECT " + string(onp.server) + "." + string(onp.db) +".OBJECT_ID(?)", string(onp.schema) + "." + string(onp.name));
-		else if (!onp.db.empty())
-			sq2.emplace(tds, "SELECT " + string(onp.db) +".OBJECT_ID(?)", string(onp.schema) + "." + string(onp.name));
-		else
+		if (!onp.server.empty()) {
+			sq2.emplace(tds, R"(SELECT object_id
+FROM )" + prefix + R"(sys.objects
+JOIN )" + prefix + R"(sys.schemas ON schemas.schema_id = objects.schema_id
+WHERE objects.name = PARSENAME(?, 1) AND
+schemas.name = PARSENAME(?, 2))", tbl1, tbl1);
+		} else
 			sq2.emplace(tds, "SELECT OBJECT_ID(?)", tbl1);
 
 		auto& sq = sq2.value();
@@ -222,13 +231,6 @@ static void create_queries(tds::tds& tds, const string_view& tbl1, const string_
 
 		object_id = (int64_t)sq[0];
 	}
-
-	string prefix;
-
-	if (!onp.server.empty())
-		prefix = string(onp.server) + "." + string(onp.db) + ".";
-	else if (!onp.db.empty())
-		prefix = string(onp.db) + ".";
 
 	{
 		tds::query sq(tds, R"(SELECT columns.name
