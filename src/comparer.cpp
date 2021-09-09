@@ -205,10 +205,10 @@ struct object_name_parts {
 
 static object_name_parts parse_object_name(const string_view& s) {
 	bool escaped = false;
-	size_t partstart = 0;
-	vector<string_view> parts;
+	size_t partstart = 0, partnum = 0;
+	array<string_view, 4> parts;
 
-	// FIXME - constexpr? Do without vector?
+	// FIXME - constexpr?
 	// FIXME - move to tdscpp(?)
 	// FIXME - also for u16string_view etc. (make into template)
 
@@ -223,16 +223,22 @@ static object_name_parts parse_object_name(const string_view& s) {
 
 			escaped = false;
 		} else if (!escaped && s[i] == '.') {
-			parts.emplace_back(&s[partstart], i - partstart);
-			partstart = i + 1;
+			if (partnum < parts.size()) {
+				parts[partnum] = string_view(&s[partstart], i - partstart);
+				partstart = i + 1;
+				partnum++;
+			}
 		}
 	}
 
-	parts.emplace_back(&s[partstart], s.length() - partstart);
+	if (partnum < parts.size()) {
+		parts[partnum] = string_view(&s[partstart], s.length() - partstart);
+		partnum++;
+	}
 
 	object_name_parts onp;
 
-	switch (parts.size()) {
+	switch (partnum) {
 		case 1:
 			onp.name = parts[0];
 		break;
