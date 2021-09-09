@@ -196,103 +196,6 @@ public:
 	win_event event;
 };
 
-struct object_name_parts {
-	string_view server;
-	string_view db;
-	string_view schema;
-	string_view name;
-};
-
-static constexpr object_name_parts parse_object_name(const string_view& s) noexcept {
-	bool escaped = false;
-	size_t partstart = 0, partnum = 0;
-	array<string_view, 4> parts;
-
-	// FIXME - move to tdscpp(?)
-	// FIXME - also for u16string_view etc. (make into template)
-
-	for (size_t i = 0; i < s.length(); i++) {
-		if (!escaped && s[i] == '[')
-			escaped = true;
-		else if (escaped && s[i] == ']') {
-			if (i + 1 < s.length() && s[i+1] == ']') {
-				i++;
-				continue;
-			}
-
-			escaped = false;
-		} else if (!escaped && s[i] == '.') {
-			if (partnum < parts.size()) {
-				parts[partnum] = string_view(&s[partstart], i - partstart);
-				partstart = i + 1;
-				partnum++;
-			}
-		}
-	}
-
-	if (partnum < parts.size()) {
-		parts[partnum] = string_view(&s[partstart], s.length() - partstart);
-		partnum++;
-	}
-
-	object_name_parts onp;
-
-	switch (partnum) {
-		case 1:
-			onp.name = parts[0];
-		break;
-
-		case 2:
-			onp.schema = parts[0];
-			onp.name = parts[1];
-		break;
-
-		case 3:
-			onp.db = parts[0];
-			onp.schema = parts[1];
-			onp.name = parts[2];
-		break;
-
-		default:
-			onp.server = parts[0];
-			onp.db = parts[1];
-			onp.schema = parts[2];
-			onp.name = parts[3];
-		break;
-	}
-
-	return onp;
-}
-
-static constexpr bool test_parse_object_name(const string_view& s, const string_view& exp_server, const string_view& exp_db,
-											 const string_view& exp_schema, const string_view& exp_name) {
-	auto onp = parse_object_name(s);
-
-	return exp_server == onp.server && exp_db == onp.db && exp_schema == onp.schema && exp_name == onp.name;
-}
-
-static_assert(test_parse_object_name("server.db.schema.name", "server", "db", "schema", "name"));
-static_assert(test_parse_object_name("server.db.schema.name.extra", "server", "db", "schema", "name"));
-static_assert(test_parse_object_name("[server].[db].[schema].[name]", "[server]", "[db]", "[schema]", "[name]"));
-static_assert(test_parse_object_name("[ser[ver].[d[b].[sch[ema].[na[me]", "[ser[ver]", "[d[b]", "[sch[ema]", "[na[me]"));
-static_assert(test_parse_object_name("[ser.ver].[d.b].[sch.ema].[na.me]", "[ser.ver]", "[d.b]", "[sch.ema]", "[na.me]"));
-static_assert(test_parse_object_name("[ser]]ver].[d]]b].[sch]]ema].[na]]me]", "[ser]]ver]", "[d]]b]", "[sch]]ema]", "[na]]me]"));
-static_assert(test_parse_object_name("db.schema.name", "", "db", "schema", "name"));
-static_assert(test_parse_object_name("[db].[schema].[name]", "", "[db]", "[schema]", "[name]"));
-static_assert(test_parse_object_name("[d[b].[sch[ema].[na[me]", "", "[d[b]", "[sch[ema]", "[na[me]"));
-static_assert(test_parse_object_name("[d.b].[sch.ema].[na.me]", "", "[d.b]", "[sch.ema]", "[na.me]"));
-static_assert(test_parse_object_name("[d]]b].[sch]]ema].[na]]me]", "", "[d]]b]", "[sch]]ema]", "[na]]me]"));
-static_assert(test_parse_object_name("schema.name", "", "", "schema", "name"));
-static_assert(test_parse_object_name("[schema].[name]", "", "", "[schema]", "[name]"));
-static_assert(test_parse_object_name("[sch[ema].[na[me]", "", "", "[sch[ema]", "[na[me]"));
-static_assert(test_parse_object_name("[sch.ema].[na.me]", "", "", "[sch.ema]", "[na.me]"));
-static_assert(test_parse_object_name("[sch]]ema].[na]]me]", "", "", "[sch]]ema]", "[na]]me]"));
-static_assert(test_parse_object_name("name", "", "", "", "name"));
-static_assert(test_parse_object_name("[name]", "", "", "", "[name]"));
-static_assert(test_parse_object_name("[na[me]", "", "", "", "[na[me]"));
-static_assert(test_parse_object_name("[na.me]", "", "", "", "[na.me]"));
-static_assert(test_parse_object_name("[na]]me]", "", "", "", "[na]]me]"));
-
 static void create_queries(tds::tds& tds, const string_view& tbl1, const string_view& tbl2,
 						   string& q1, string& q2, unsigned int& pk_columns) {
 	vector<string> cols;
@@ -300,7 +203,7 @@ static void create_queries(tds::tds& tds, const string_view& tbl1, const string_
 
 	pk_columns = 0;
 
-	auto onp = parse_object_name(tbl1);
+	auto onp = tds::parse_object_name(tbl1);
 
 	{
 		optional<tds::query> sq2;
