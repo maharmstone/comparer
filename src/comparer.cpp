@@ -260,7 +260,7 @@ ORDER BY columns.column_id)", object_id);
 		while (sq.fetch_row()) {
 			auto s = (u16string)sq[0];
 
-			if (s == u"Data Load Date") // FIXME - option for this?
+			if (s == u"Data Load Date" || s == u"data_load_date") // FIXME - option for this?
 				continue;
 
 			cols.emplace_back(tds::escape(s));
