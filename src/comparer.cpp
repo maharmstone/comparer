@@ -123,7 +123,7 @@ private:
 
 class sql_thread {
 public:
-	sql_thread(const string_view& query) : finished(false), query(query), tds(db_server, db_username, db_password, DB_APP), t([](sql_thread* st) {
+	sql_thread(const u16string_view& query) : finished(false), query(query), tds(db_server, db_username, db_password, DB_APP), t([](sql_thread* st) {
 			st->run();
 		}, this) {
 	}
@@ -187,7 +187,7 @@ public:
 	}
 
 	bool finished;
-	string query;
+	u16string query;
 	tds::tds tds;
 	thread t;
 	exception_ptr ex;
@@ -196,14 +196,15 @@ public:
 	win_event event;
 };
 
-static void create_queries(tds::tds& tds, const string_view& tbl1, const string_view& tbl2,
-						   string& q1, string& q2, unsigned int& pk_columns) {
-	vector<string> cols;
+static void create_queries(tds::tds& tds, const u16string_view& tbl1, const u16string_view& tbl2,
+						   u16string& q1, u16string& q2, unsigned int& pk_columns) {
+	vector<u16string> cols;
 	int64_t object_id;
 
 	pk_columns = 0;
 
-	auto onp = tds::parse_object_name(tbl1);
+	auto tbl1s8 = tds::utf16_to_utf8(tbl1); // FIXME
+	auto onp = tds::parse_object_name(tbl1s8);
 
 	string prefix;
 
@@ -241,7 +242,7 @@ WHERE index_columns.object_id = ? AND indexes.is_primary_key = 1
 ORDER BY index_columns.index_column_id)", object_id);
 
 		while (sq.fetch_row()) {
-			cols.emplace_back(tds::escape((string)sq[0]));
+			cols.emplace_back(tds::escape((u16string)sq[0]));
 			pk_columns++;
 		}
 	}
@@ -258,9 +259,9 @@ WHERE columns.object_id = ? AND index_columns.column_id IS NULL
 ORDER BY columns.column_id)", object_id);
 
 		while (sq.fetch_row()) {
-			auto s = (string)sq[0];
+			auto s = (u16string)sq[0];
 
-			if (s == "Data Load Date") // FIXME - option for this?
+			if (s == u"Data Load Date") // FIXME - option for this?
 				continue;
 
 			cols.emplace_back(tds::escape(s));
@@ -274,32 +275,32 @@ ORDER BY columns.column_id)", object_id);
 
 	for (const auto& col : cols) {
 		if (q1.empty())
-			q1 = "SELECT ";
+			q1 = u"SELECT ";
 		else
-			q1 += ", ";
+			q1 += u", ";
 
 		q1 += col;
 
 		if (q2.empty())
-			q2 = "SELECT ";
+			q2 = u"SELECT ";
 		else
-			q2 += ", ";
+			q2 += u", ";
 
 		q2 += col;
 	}
 
-	q1 += " FROM ";
+	q1 += u" FROM ";
 	q1 += tbl1;
-	q1 += " ORDER BY ";
+	q1 += u" ORDER BY ";
 
-	q2 += " FROM ";
+	q2 += u" FROM ";
 	q2 += tbl2;
-	q2 += " ORDER BY ";
+	q2 += u" ORDER BY ";
 
 	for (unsigned int i = 0; i < pk_columns; i++) {
 		if (i != 0) {
-			q1 += ", ";
-			q2 += ", ";
+			q1 += u", ";
+			q2 += u", ";
 		}
 
 		q1 += cols[i];
@@ -342,7 +343,7 @@ static void do_compare(unsigned int num) {
 
 	tds::tds tds(db_server, db_username, db_password, DB_APP);
 
-	string q1, q2;
+	u16string q1, q2;
 	unsigned int pk_columns;
 
 	{
@@ -362,8 +363,8 @@ static void do_compare(unsigned int num) {
 			if (sq[2].is_null)
 				throw runtime_error("query2 is NULL");
 
-			q1 = (string)sq[1];
-			q2 = (string)sq[2];
+			q1 = (u16string)sq[1];
+			q2 = (u16string)sq[2];
 
 			pk_columns = 1;
 		} else if (type == "table") {
@@ -373,8 +374,8 @@ static void do_compare(unsigned int num) {
 			if (sq[4].is_null)
 				throw runtime_error("table2 is NULL");
 
-			auto tbl1 = (string)sq[3];
-			auto tbl2 = (string)sq[4];
+			auto tbl1 = (u16string)sq[3];
+			auto tbl2 = (u16string)sq[4];
 
 			sq2.reset();
 
