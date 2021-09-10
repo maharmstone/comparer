@@ -203,23 +203,22 @@ static void create_queries(tds::tds& tds, const u16string_view& tbl1, const u16s
 
 	pk_columns = 0;
 
-	auto tbl1s8 = tds::utf16_to_utf8(tbl1); // FIXME
-	auto onp = tds::parse_object_name(tbl1s8);
+	auto onp = tds::parse_object_name(tbl1);
 
-	string prefix;
+	u16string prefix;
 
 	if (!onp.server.empty())
-		prefix = string(onp.server) + "." + string(onp.db) + ".";
+		prefix = u16string(onp.server) + u"." + u16string(onp.db) + u".";
 	else if (!onp.db.empty())
-		prefix = string(onp.db) + ".";
+		prefix = u16string(onp.db) + u".";
 
 	{
 		optional<tds::query> sq2;
 
 		if (!onp.server.empty()) {
-			sq2.emplace(tds, R"(SELECT object_id
-FROM )" + prefix + R"(sys.objects
-JOIN )" + prefix + R"(sys.schemas ON schemas.schema_id = objects.schema_id
+			sq2.emplace(tds, uR"(SELECT object_id
+FROM )" + prefix + uR"(sys.objects
+JOIN )" + prefix + uR"(sys.schemas ON schemas.schema_id = objects.schema_id
 WHERE objects.name = PARSENAME(?, 1) AND
 schemas.name = PARSENAME(?, 2))", tbl1, tbl1);
 		} else
@@ -234,10 +233,10 @@ schemas.name = PARSENAME(?, 2))", tbl1, tbl1);
 	}
 
 	{
-		tds::query sq(tds, R"(SELECT columns.name
-FROM )" + prefix + R"(sys.index_columns
-JOIN )" + prefix + R"(sys.indexes ON indexes.object_id = index_columns.object_id AND indexes.index_id = index_columns.index_id
-JOIN )" + prefix + R"(sys.columns ON columns.object_id = index_columns.object_id AND columns.column_id = index_columns.column_id
+		tds::query sq(tds, uR"(SELECT columns.name
+FROM )" + prefix + uR"(sys.index_columns
+JOIN )" + prefix + uR"(sys.indexes ON indexes.object_id = index_columns.object_id AND indexes.index_id = index_columns.index_id
+JOIN )" + prefix + uR"(sys.columns ON columns.object_id = index_columns.object_id AND columns.column_id = index_columns.column_id
 WHERE index_columns.object_id = ? AND indexes.is_primary_key = 1
 ORDER BY index_columns.index_column_id)", object_id);
 
@@ -251,10 +250,10 @@ ORDER BY index_columns.index_column_id)", object_id);
 		throw formatted_error("No primary key found for {}.", tbl1);
 
 	{
-		tds::query sq(tds, R"(SELECT columns.name
-FROM )" + prefix + R"(sys.columns
-JOIN )" + prefix + R"(sys.indexes ON indexes.object_id = columns.object_id AND indexes.is_primary_key = 1
-LEFT JOIN )" + prefix + R"(sys.index_columns ON index_columns.object_id = columns.object_id AND index_columns.index_id = indexes.index_id AND index_columns.column_id = columns.column_id
+		tds::query sq(tds, uR"(SELECT columns.name
+FROM )" + prefix + uR"(sys.columns
+JOIN )" + prefix + uR"(sys.indexes ON indexes.object_id = columns.object_id AND indexes.is_primary_key = 1
+LEFT JOIN )" + prefix + uR"(sys.index_columns ON index_columns.object_id = columns.object_id AND index_columns.index_id = indexes.index_id AND index_columns.column_id = columns.column_id
 WHERE columns.object_id = ? AND index_columns.column_id IS NULL
 ORDER BY columns.column_id)", object_id);
 
