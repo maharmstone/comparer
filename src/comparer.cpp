@@ -227,7 +227,7 @@ schemas.name = PARSENAME(?, 2))", tbl1, tbl1);
 		auto& sq = sq2.value();
 
 		if (!sq.fetch_row() || sq[0].is_null)
-			throw formatted_error("Could not get object ID for {}.", tbl1);
+			throw formatted_error("Could not get object ID for {}.", tds::utf16_to_utf8(tbl1));
 
 		object_id = (int64_t)sq[0];
 	}
@@ -247,7 +247,7 @@ ORDER BY index_columns.index_column_id)", object_id);
 	}
 
 	if (cols.empty())
-		throw formatted_error("No primary key found for {}.", tbl1);
+		throw formatted_error("No primary key found for {}.", tds::utf16_to_utf8(tbl1));
 
 	{
 		tds::query sq(tds, uR"(SELECT columns.name
@@ -270,7 +270,7 @@ ORDER BY columns.column_id)", object_id);
 	// FIXME - PKs with DESC element?
 
 	if (cols.empty())
-		throw formatted_error("No columns returned for {}.", tbl1);
+		throw formatted_error("No columns returned for {}.", tds::utf16_to_utf8(tbl1));
 
 	for (const auto& col : cols) {
 		if (q1.empty())
