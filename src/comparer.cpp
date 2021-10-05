@@ -153,18 +153,24 @@ public:
 					if (finished)
 						break;
 
+					list<vector<tds::column>> l;
+					l.emplace_back();
+					auto& v = l.back();
+
+					v.reserve(num_col);
+
+					for (uint16_t i = 0; i < num_col; i++) {
+						v.emplace_back(sq[i]);
+					}
+
 					{
 						lock_guard<mutex> guard(lock);
 
 						results.emplace_back();
 
-						auto& v = results.back();
+						auto& vr = results.back();
 
-						v.reserve(num_col);
-
-						for (uint16_t i = 0; i < num_col; i++) {
-							v.emplace_back(sq[i]);
-						}
+						vr.swap(v);
 					}
 
 					event.set();
