@@ -123,7 +123,7 @@ private:
 
 class sql_thread {
 public:
-	sql_thread(const u16string_view& query) : finished(false), query(query), tds(db_server, db_username, db_password, DB_APP), t([](sql_thread* st) {
+	sql_thread(const string_view& server, const u16string_view& query) : finished(false), query(query), tds(server, db_username, db_password, DB_APP), t([](sql_thread* st) {
 			st->run();
 		}, this) {
 	}
@@ -209,7 +209,8 @@ public:
 };
 
 static void create_queries(tds::tds& tds, const u16string_view& tbl1, const u16string_view& tbl2,
-						   u16string& q1, u16string& q2, unsigned int& pk_columns) {
+						   u16string& q1, u16string& q2, string& server1, string& server2,
+						   unsigned int& pk_columns) {
 	vector<u16string> cols;
 	int64_t object_id;
 
@@ -219,16 +220,22 @@ static void create_queries(tds::tds& tds, const u16string_view& tbl1, const u16s
 
 	u16string prefix;
 
-	if (!onp.server.empty())
-		prefix = u16string(onp.server) + u"." + u16string(onp.db) + u".";
-	else if (!onp.db.empty())
+	if (!onp.server.empty() || !onp.db.empty())
 		prefix = u16string(onp.db) + u".";
+
+	if (!onp.server.empty())
+		server1 = tds::utf16_to_utf8(onp.server);
+	else
+		server1 = db_server;
 
 	{
 		optional<tds::query> sq2;
+		optional<tds::tds> tds2;
 
 		if (!onp.server.empty()) {
-			sq2.emplace(tds, uR"(SELECT object_id
+			tds2.emplace(server1, db_username, db_password, DB_APP);
+
+			sq2.emplace(*tds2, uR"(SELECT object_id
 FROM )" + prefix + uR"(sys.objects
 JOIN )" + prefix + uR"(sys.schemas ON schemas.schema_id = objects.schema_id
 WHERE objects.name = PARSENAME(?, 1) AND
@@ -305,7 +312,28 @@ ORDER BY columns.column_id)", object_id);
 	q1 += u" ORDER BY ";
 
 	q2 += u" FROM ";
-	q2 += tbl2;
+
+	onp = tds::parse_object_name(tbl2);
+
+	if (!onp.server.empty()) {
+		server2 = tds::utf16_to_utf8(onp.server);
+
+		if (!onp.db.empty()) {
+			q2 += onp.db;
+			q2 += u".";
+		}
+
+		if (!onp.schema.empty()) {
+			q2 += onp.schema;
+			q2 += u".";
+		}
+
+		q2 += onp.name;
+	} else {
+		server2 = db_server;
+		q2 += tbl2;
+	}
+
 	q2 += u" ORDER BY ";
 
 	for (unsigned int i = 0; i < pk_columns; i++) {
@@ -355,6 +383,7 @@ static void do_compare(unsigned int num) {
 	tds::tds tds(db_server, db_username, db_password, DB_APP);
 
 	u16string q1, q2;
+	string server1, server2;
 	unsigned int pk_columns;
 
 	{
@@ -376,6 +405,7 @@ static void do_compare(unsigned int num) {
 
 			q1 = (u16string)sq[1];
 			q2 = (u16string)sq[2];
+			server1 = server2 = db_server;
 
 			pk_columns = 1;
 		} else if (type == "table") {
@@ -390,7 +420,7 @@ static void do_compare(unsigned int num) {
 
 			sq2.reset();
 
-			create_queries(tds, tbl1, tbl2, q1, q2, pk_columns);
+			create_queries(tds, tbl1, tbl2, q1, q2, server1, server2, pk_columns);
 		} else
 			throw formatted_error("Unsupported type {}.", type);
 	}
@@ -399,8 +429,8 @@ static void do_compare(unsigned int num) {
 	vector<tds::value> row1, row2;
 	list<vector<tds::value>> rows1, rows2;
 
-	sql_thread t1(q1);
-	sql_thread t2(q2);
+	sql_thread t1(server1, q1);
+	sql_thread t2(server2, q2);
 
 	auto fetch = [](auto& rows, bool& finished, bool& done, sql_thread& t, auto& row) {
 		while (rows.empty() && !finished) {
