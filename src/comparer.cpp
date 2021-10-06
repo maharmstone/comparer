@@ -141,6 +141,12 @@ public:
 			auto num_col = sq.num_columns();
 
 			if (b) {
+				names.reserve(num_col);
+
+				for (uint16_t i = 0; i < num_col; i++) {
+					names.emplace_back(sq[i].name);
+				}
+
 				do {
 					size_t num_res;
 
@@ -153,7 +159,7 @@ public:
 					if (finished)
 						break;
 
-					list<vector<tds::column>> l;
+					decltype(results) l;
 					l.emplace_back();
 					auto& v = l.back();
 
@@ -197,7 +203,8 @@ public:
 	tds::tds tds;
 	thread t;
 	exception_ptr ex;
-	list<vector<tds::column>> results;
+	vector<u16string> names;
+	list<vector<tds::value>> results;
 	mutex lock;
 	win_event event;
 };
@@ -313,7 +320,7 @@ ORDER BY columns.column_id)", object_id);
 	}
 }
 
-static weak_ordering compare_pks(const vector<tds::column>& row1, const vector<tds::column>& row2, unsigned int pk_columns) {
+static weak_ordering compare_pks(const vector<tds::value>& row1, const vector<tds::value>& row2, unsigned int pk_columns) {
 	for (unsigned int i = 0; i < pk_columns; i++) {
 		auto ret = row1[i] <=> row2[i];
 
@@ -329,7 +336,7 @@ static weak_ordering compare_pks(const vector<tds::column>& row1, const vector<t
 	return weak_ordering::equivalent;
 }
 
-static string make_pk_string(const vector<tds::column>& row, unsigned int pk_columns) {
+static string make_pk_string(const vector<tds::value>& row, unsigned int pk_columns) {
 	string ret;
 
 	for (unsigned int i = 0; i < pk_columns; i++) {
@@ -390,13 +397,13 @@ static void do_compare(unsigned int num) {
 	}
 
 	bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
-	vector<tds::column> row1, row2;
-	list<vector<tds::column>> rows1, rows2;
+	vector<tds::value> row1, row2;
+	list<vector<tds::value>> rows1, rows2;
 
 	sql_thread t1(q1);
 	sql_thread t2(q2);
 
-	auto fetch = [](list<vector<tds::column>>& rows, bool& finished, bool& done, sql_thread& t, vector<tds::column>& row) {
+	auto fetch = [](auto& rows, bool& finished, bool& done, sql_thread& t, auto& row) {
 		while (rows.empty() && !finished) {
 			finished = done;
 
@@ -470,7 +477,7 @@ END
 							if (pk.empty())
 								pk = make_pk_string(row1, pk_columns);
 
-							res.emplace_back(num, pk, change::modified, i + 1, v1, v2, v1.name);
+							res.emplace_back(num, pk, change::modified, i + 1, v1, v2, t1.names[i]);
 							changed = true;
 						}
 					}
@@ -490,9 +497,9 @@ END
 						const auto& v1 = row1[i];
 
 						if (v1.is_null)
-							res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, v1.name);
+							res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, t1.names[i]);
 						else
-							res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, v1.name);
+							res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, t1.names[i]);
 					}
 
 					removed_rows++;
@@ -506,9 +513,9 @@ END
 						const auto& v2 = row2[i];
 
 						if (v2.is_null)
-							res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, v2.name);
+							res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, t2.names[i]);
 						else
-							res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, v2.name);
+							res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, t2.names[i]);
 					}
 
 					added_rows++;
@@ -523,9 +530,9 @@ END
 					const auto& v1 = row1[i];
 
 					if (v1.is_null)
-						res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, v1.name);
+						res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, t1.names[i]);
 					else
-						res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, v1.name);
+						res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, t1.names[i]);
 				}
 
 				removed_rows++;
@@ -539,9 +546,9 @@ END
 					const auto& v2 = row2[i];
 
 					if (v2.is_null)
-						res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, v2.name);
+						res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, t2.names[i]);
 					else
-						res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, v2.name);
+						res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, t2.names[i]);
 				}
 
 				added_rows++;
