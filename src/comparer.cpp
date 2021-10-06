@@ -396,63 +396,36 @@ static void do_compare(unsigned int num) {
 	sql_thread t1(q1);
 	sql_thread t2(q2);
 
-	auto t1_fetch = [&]() {
-		while (rows1.empty() && !t1_finished) {
-			t1_finished = t1_done;
+	auto fetch = [](list<vector<tds::column>>& rows, bool& finished, bool& done, sql_thread& t, vector<tds::column>& row) {
+		while (rows.empty() && !finished) {
+			finished = done;
 
-			if (t1_finished)
+			if (finished)
 				return;
 
-			t1.wait_for([&]() {
-				t1_done = t1.finished;
+			t.wait_for([&]() {
+				done = t.finished;
 
-				if (!t1.results.empty())
-					rows1.splice(rows1.end(), t1.results);
+				if (!t.results.empty())
+					rows.splice(rows.end(), t.results);
 
-				if (t1.finished && t1.ex)
-					rethrow_exception(t1.ex);
+				if (t.finished && t.ex)
+					rethrow_exception(t.ex);
 			});
 
-			if (rows1.empty() && t1_done) {
-				t1_finished = true;
+			if (rows.empty() && done) {
+				finished = true;
 				return;
 			}
 		}
 
-		row1 = move(rows1.front());
-		rows1.pop_front();
-	};
-
-	auto t2_fetch = [&]() {
-		while (rows2.empty() && !t2_finished) {
-			t2_finished = t2_done;
-
-			if (t2_finished)
-				return;
-
-			t2.wait_for([&]() {
-				t2_done = t2.finished;
-
-				if (!t2.results.empty())
-					rows2.splice(rows2.end(), t2.results);
-
-				if (t2.finished && t2.ex)
-					rethrow_exception(t2.ex);
-			});
-
-			if (rows2.empty() && t2_done) {
-				t2_finished = true;
-				return;
-			}
-		}
-
-		row2 = move(rows2.front());
-		rows2.pop_front();
+		row = move(rows.front());
+		rows.pop_front();
 	};
 
 	try {
-		t1_fetch();
-		t2_fetch();
+		fetch(rows1, t1_finished, t1_done, t1, row1);
+		fetch(rows2, t2_finished, t2_done, t2, row2);
 
 		{
 			tds::query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) VALUES(GETDATE(), ?, 0, 'Interrupted.'); SELECT SCOPE_IDENTITY()", num);
@@ -508,8 +481,8 @@ END
 					num_rows1++;
 					num_rows2++;
 
-					t1_fetch();
-					t2_fetch();
+					fetch(rows1, t1_finished, t1_done, t1, row1);
+					fetch(rows2, t2_finished, t2_done, t2, row2);
 				} else if (cmp == weak_ordering::less) {
 					const auto& pk = make_pk_string(row1, pk_columns);
 
@@ -525,7 +498,7 @@ END
 					removed_rows++;
 					num_rows1++;
 
-					t1_fetch();
+					fetch(rows1, t1_finished, t1_done, t1, row1);
 				} else {
 					const auto& pk = make_pk_string(row2, pk_columns);
 
@@ -541,7 +514,7 @@ END
 					added_rows++;
 					num_rows2++;
 
-					t2_fetch();
+					fetch(rows2, t2_finished, t2_done, t2, row2);
 				}
 			} else if (!t1_finished) {
 				const auto& pk = make_pk_string(row1, pk_columns);
@@ -558,7 +531,7 @@ END
 				removed_rows++;
 				num_rows1++;
 
-				t1_fetch();
+				fetch(rows1, t1_finished, t1_done, t1, row1);
 			} else {
 				const auto& pk = make_pk_string(row2, pk_columns);
 
@@ -574,7 +547,7 @@ END
 				added_rows++;
 				num_rows2++;
 
-				t2_fetch();
+				fetch(rows2, t2_finished, t2_done, t2, row2);
 			}
 
 			if (res.size() > 10000) { // flush
