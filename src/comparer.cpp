@@ -160,23 +160,22 @@ public:
 						break;
 
 					decltype(results) l;
-					l.emplace_back();
-					auto& v = l.back();
 
-					v.reserve(num_col);
+					do {
+						l.emplace_back();
+						auto& v = l.back();
 
-					for (uint16_t i = 0; i < num_col; i++) {
-						v.emplace_back(sq[i]);
-					}
+						v.reserve(num_col);
+
+						for (uint16_t i = 0; i < num_col; i++) {
+							v.emplace_back(sq[i]);
+						}
+					} while (sq.fetch_row_no_wait());
 
 					{
 						lock_guard<mutex> guard(lock);
 
-						results.emplace_back();
-
-						auto& vr = results.back();
-
-						vr.swap(v);
+						results.splice(results.end(), l);
 					}
 
 					event.set();
