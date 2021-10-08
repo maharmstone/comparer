@@ -65,8 +65,7 @@ private:
 class _formatted_error : public std::exception {
 public:
 	template<typename T, typename... Args>
-	_formatted_error(const T& s, Args&&... args) {
-		msg = fmt::format(s, std::forward<Args>(args)...);
+	_formatted_error(const T& s, Args&&... args) : msg(fmt::format(s, std::forward<Args>(args)...)) {
 	}
 
 	const char* what() const noexcept {
