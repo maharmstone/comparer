@@ -1,15 +1,9 @@
-#include <windows.h>
-#include <tdscpp.h>
+#include "comparer.h"
 #include <iostream>
-#include <string>
-#include <list>
-#include <thread>
 #include <optional>
 #include <mutex>
 #include <functional>
 #include <array>
-#include <fmt/format.h>
-#include <fmt/compile.h>
 
 using namespace std;
 
@@ -18,194 +12,101 @@ static const string DB_APP = "Janus";
 static unsigned int log_id = 0;
 static string db_server, db_username, db_password;
 
-enum class change {
-	modified,
-	added,
-	removed
-};
+win_event::win_event() {
+	h = CreateEvent(nullptr, false, false, nullptr);
 
-class last_error : public std::exception {
-public:
-	last_error(const std::string_view& function, int le) {
-		std::string nice_msg;
+	if (!h)
+		throw last_error("CreateEvent", GetLastError());
+}
 
-		{
-			char16_t* fm;
+win_event::~win_event() {
+	CloseHandle(h);
+}
 
-			if (FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr,
-				le, 0, reinterpret_cast<LPWSTR>(&fm), 0, nullptr)) {
-				try {
-					std::u16string_view s = fm;
+void win_event::set() {
+	SetEvent(h);
+}
 
-					while (!s.empty() && (s[s.length() - 1] == u'\r' || s[s.length() - 1] == u'\n')) {
-						s.remove_suffix(1);
-					}
+void win_event::wait() {
+	auto ret = WaitForSingleObject(h, INFINITE);
 
-					nice_msg = tds::utf16_to_utf8(s);
-				} catch (...) {
-					LocalFree(fm);
-					throw;
-				}
+	if (ret != WAIT_OBJECT_0)
+		throw formatted_error("CreateEvent returned {}.", ret);
+}
 
-				LocalFree(fm);
-				}
-		}
+sql_thread::sql_thread(const string_view& server, const u16string_view& query) : finished(false), query(query), tds(server, db_username, db_password, DB_APP), t([](sql_thread* st) {
+		st->run();
+	}, this) {
+}
 
-		msg = std::string(function) + " failed (error " + std::to_string(le) + (!nice_msg.empty() ? (", " + nice_msg) : "") + ").";
-	}
+sql_thread::~sql_thread() {
+	t.join();
+}
 
-	const char* what() const noexcept {
-		return msg.c_str();
-	}
+void sql_thread::run() {
+	try {
+		tds::query sq(tds, query);
 
-private:
-	std::string msg;
-};
+		auto b = sq.fetch_row();
 
-class _formatted_error : public std::exception {
-public:
-	template<typename T, typename... Args>
-	_formatted_error(const T& s, Args&&... args) : msg(fmt::format(s, std::forward<Args>(args)...)) {
-	}
+		auto num_col = sq.num_columns();
 
-	const char* what() const noexcept {
-		return msg.c_str();
-	}
+		if (b) {
+			names.reserve(num_col);
 
-private:
-	std::string msg;
-};
+			for (uint16_t i = 0; i < num_col; i++) {
+				names.emplace_back(sq[i].name);
+			}
 
-#define formatted_error(s, ...) _formatted_error(FMT_COMPILE(s), ##__VA_ARGS__)
-
-class result {
-public:
-	result(int query, const string& primary_key, enum change change, unsigned int col,
-		   const tds::value& value1, const tds::value& value2, const tds::value& col_name) :
-		query(query), primary_key(primary_key), change(change), col(col), value1(value1), value2(value2), col_name(col_name) {
-	}
-
-	int query;
-	string primary_key;
-	enum change change;
-	unsigned int col;
-	tds::value value1, value2, col_name;
-};
-
-class win_event {
-public:
-	win_event() {
-		h = CreateEvent(nullptr, false, false, nullptr);
-
-		if (!h)
-			throw last_error("CreateEvent", GetLastError());
-	}
-
-	~win_event() {
-		CloseHandle(h);
-	}
-
-	void set() {
-		SetEvent(h);
-	}
-
-	void wait() {
-		auto ret = WaitForSingleObject(h, INFINITE);
-
-		if (ret != WAIT_OBJECT_0)
-			throw formatted_error("CreateEvent returned {}.", ret);
-	}
-
-private:
-	HANDLE h;
-};
-
-class sql_thread {
-public:
-	sql_thread(const string_view& server, const u16string_view& query) : finished(false), query(query), tds(server, db_username, db_password, DB_APP), t([](sql_thread* st) {
-			st->run();
-		}, this) {
-	}
-
-	~sql_thread() {
-		t.join();
-	}
-
-	void run() {
-		try {
-			tds::query sq(tds, query);
-
-			auto b = sq.fetch_row();
-
-			auto num_col = sq.num_columns();
-
-			if (b) {
-				names.reserve(num_col);
-
-				for (uint16_t i = 0; i < num_col; i++) {
-					names.emplace_back(sq[i].name);
-				}
+			do {
+				size_t num_res;
 
 				do {
-					size_t num_res;
+					lock_guard<mutex> guard(lock);
 
-					do {
-						lock_guard<mutex> guard(lock);
+					num_res = results.size();
+				} while (num_res > 100000 && !finished);
 
-						num_res = results.size();
-					} while (num_res > 100000 && !finished);
+				if (finished)
+					break;
 
-					if (finished)
-						break;
+				decltype(results) l;
 
-					decltype(results) l;
+				do {
+					l.emplace_back();
+					auto& v = l.back();
 
-					do {
-						l.emplace_back();
-						auto& v = l.back();
+					v.reserve(num_col);
 
-						v.reserve(num_col);
-
-						for (uint16_t i = 0; i < num_col; i++) {
-							v.emplace_back(sq[i]);
-						}
-					} while (sq.fetch_row_no_wait());
-
-					{
-						lock_guard<mutex> guard(lock);
-
-						results.splice(results.end(), l);
+					for (uint16_t i = 0; i < num_col; i++) {
+						v.emplace_back(sq[i]);
 					}
+				} while (sq.fetch_row_no_wait());
 
-					event.set();
-				} while (!finished && sq.fetch_row());
-			}
-		} catch (...) {
-			ex = current_exception();
+				{
+					lock_guard<mutex> guard(lock);
+
+					results.splice(results.end(), l);
+				}
+
+				event.set();
+			} while (!finished && sq.fetch_row());
 		}
-
-		finished = true;
-		event.set();
+	} catch (...) {
+		ex = current_exception();
 	}
 
-	void wait_for(const function<void()>& func) {
-		event.wait();
+	finished = true;
+	event.set();
+}
 
-		lock_guard<mutex> guard(lock);
+void sql_thread::wait_for(const function<void()>& func) {
+	event.wait();
 
-		func();
-	}
+	lock_guard<mutex> guard(lock);
 
-	bool finished;
-	u16string query;
-	tds::tds tds;
-	thread t;
-	exception_ptr ex;
-	vector<u16string> names;
-	list<vector<tds::value>> results;
-	mutex lock;
-	win_event event;
-};
+	func();
+}
 
 static void create_queries(tds::tds& tds, const u16string_view& tbl1, const u16string_view& tbl2,
 						   u16string& q1, u16string& q2, string& server1, string& server2,
