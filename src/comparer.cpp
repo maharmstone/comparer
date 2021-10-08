@@ -492,8 +492,6 @@ END
 			if (!t1_finished && !t2_finished) {
 				auto cmp = compare_pks(row1, row2, pk_columns);
 
-				// FIXME - what about tables made up solely of primary key?
-
 				if (cmp == weak_ordering::equivalent) {
 					bool changed = false;
 					string pk;
@@ -522,13 +520,17 @@ END
 				} else if (cmp == weak_ordering::less) {
 					const auto& pk = make_pk_string(row1, pk_columns);
 
-					for (unsigned int i = pk_columns; i < row1.size(); i++) {
-						const auto& v1 = row1[i];
+					if (pk_columns == row1.size())
+						res.emplace_back(num, pk, change::removed, 0, nullptr, nullptr, nullptr);
+					else {
+						for (unsigned int i = pk_columns; i < row1.size(); i++) {
+							const auto& v1 = row1[i];
 
-						if (v1.is_null)
-							res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, t1.names[i]);
-						else
-							res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, t1.names[i]);
+							if (v1.is_null)
+								res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, t1.names[i]);
+							else
+								res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, t1.names[i]);
+						}
 					}
 
 					removed_rows++;
@@ -538,13 +540,17 @@ END
 				} else {
 					const auto& pk = make_pk_string(row2, pk_columns);
 
-					for (unsigned int i = pk_columns; i < row2.size(); i++) {
-						const auto& v2 = row2[i];
+					if (pk_columns == row2.size())
+						res.emplace_back(num, pk, change::added, 0, nullptr, nullptr, nullptr);
+					else {
+						for (unsigned int i = pk_columns; i < row2.size(); i++) {
+							const auto& v2 = row2[i];
 
-						if (v2.is_null)
-							res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, t2.names[i]);
-						else
-							res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, t2.names[i]);
+							if (v2.is_null)
+								res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, t2.names[i]);
+							else
+								res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, t2.names[i]);
+						}
 					}
 
 					added_rows++;
@@ -555,13 +561,17 @@ END
 			} else if (!t1_finished) {
 				const auto& pk = make_pk_string(row1, pk_columns);
 
-				for (unsigned int i = 1; i < row1.size(); i++) {
-					const auto& v1 = row1[i];
+				if (pk_columns == row1.size())
+					res.emplace_back(num, pk, change::removed, 0, nullptr, nullptr, nullptr);
+				else {
+					for (unsigned int i = pk_columns; i < row1.size(); i++) {
+						const auto& v1 = row1[i];
 
-					if (v1.is_null)
-						res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, t1.names[i]);
-					else
-						res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, t1.names[i]);
+						if (v1.is_null)
+							res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, t1.names[i]);
+						else
+							res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, t1.names[i]);
+					}
 				}
 
 				removed_rows++;
@@ -571,13 +581,17 @@ END
 			} else {
 				const auto& pk = make_pk_string(row2, pk_columns);
 
-				for (unsigned int i = 1; i < row2.size(); i++) {
-					const auto& v2 = row2[i];
+				if (pk_columns == row2.size())
+					res.emplace_back(num, pk, change::added, 0, nullptr, nullptr, nullptr);
+				else {
+					for (unsigned int i = pk_columns; i < row2.size(); i++) {
+						const auto& v2 = row2[i];
 
-					if (v2.is_null)
-						res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, t2.names[i]);
-					else
-						res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, t2.names[i]);
+						if (v2.is_null)
+							res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, t2.names[i]);
+						else
+							res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, t2.names[i]);
+					}
 				}
 
 				added_rows++;
