@@ -87,7 +87,7 @@ class win_event {
 public:
 	win_event();
 	~win_event();
-	void set();
+	void set() noexcept;
 	void wait();
 
 private:

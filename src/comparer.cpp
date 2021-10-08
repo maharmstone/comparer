@@ -23,7 +23,7 @@ win_event::~win_event() {
 	CloseHandle(h);
 }
 
-void win_event::set() {
+void win_event::set() noexcept {
 	SetEvent(h);
 }
 
