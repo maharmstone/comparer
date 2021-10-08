@@ -2,7 +2,6 @@
 #include <iostream>
 #include <optional>
 #include <mutex>
-#include <functional>
 #include <array>
 
 using namespace std;
@@ -100,7 +99,7 @@ void sql_thread::run() noexcept {
 	event.set();
 }
 
-void sql_thread::wait_for(const function<void()>& func) {
+void sql_thread::wait_for(const invocable auto& func) {
 	event.wait();
 
 	lock_guard<mutex> guard(lock);

@@ -100,7 +100,7 @@ public:
 	sql_thread(const std::string_view& server, const std::u16string_view& query);
 	~sql_thread();
 	void run() noexcept;
-	void wait_for(const std::function<void()>& func);
+	void wait_for(const std::invocable auto& func);
 
 	bool finished;
 	std::u16string query;
