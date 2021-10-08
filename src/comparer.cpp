@@ -336,15 +336,17 @@ static void do_compare(unsigned int num) {
 			if (finished)
 				return;
 
-			t.wait_for([&]() {
+			decltype(t.results) tmp;
+
+			t.wait_for([&]() noexcept {
 				done = t.finished;
 
 				if (!t.results.empty())
 					rows.splice(rows.end(), t.results);
-
-				if (t.finished && t.ex)
-					rethrow_exception(t.ex);
 			});
+
+			if (t.finished && t.ex)
+				rethrow_exception(t.ex);
 
 			if (rows.empty() && done) {
 				finished = true;
