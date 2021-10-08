@@ -11,23 +11,17 @@ static const string DB_APP = "Janus";
 static unsigned int log_id = 0;
 static string db_server, db_username, db_password;
 
-win_event::win_event() {
-	h = CreateEvent(nullptr, false, false, nullptr);
-
+win_event::win_event() : h(CreateEvent(nullptr, false, false, nullptr)) {
 	if (!h)
 		throw last_error("CreateEvent", GetLastError());
 }
 
-win_event::~win_event() {
-	CloseHandle(h);
-}
-
 void win_event::set() noexcept {
-	SetEvent(h);
+	SetEvent(h.get());
 }
 
 void win_event::wait() {
-	auto ret = WaitForSingleObject(h, INFINITE);
+	auto ret = WaitForSingleObject(h.get(), INFINITE);
 
 	if (ret != WAIT_OBJECT_0)
 		throw formatted_error("CreateEvent returned {}.", ret);

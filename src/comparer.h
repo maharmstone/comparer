@@ -6,6 +6,7 @@
 #include <functional>
 #include <list>
 #include <thread>
+#include <memory>
 #include <fmt/format.h>
 #include <fmt/compile.h>
 
@@ -83,17 +84,29 @@ public:
 	tds::value value1, value2, col_name;
 };
 
+class handle_closer {
+public:
+	typedef HANDLE pointer;
+
+	void operator()(HANDLE h) {
+		if (h == INVALID_HANDLE_VALUE)
+			return;
+
+		CloseHandle(h);
+	}
+};
+
+typedef std::unique_ptr<HANDLE, handle_closer> unique_handle;
+
 class win_event {
 public:
 	win_event();
-	~win_event();
 	void set() noexcept;
 	void wait();
 
 private:
-	HANDLE h;
+	unique_handle h;
 };
-
 
 class sql_thread {
 public:
