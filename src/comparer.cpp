@@ -377,7 +377,6 @@ static string make_pk_string(const vector<tds::value>& row, unsigned int pk_colu
 }
 
 static void do_compare(unsigned int num) {
-	unsigned int num_rows1 = 0, num_rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0, rows_since_update = 0;
 	list<result> res;
 
 	tds::tds tds(db_server, db_username, db_password, DB_APP);
@@ -425,7 +424,6 @@ static void do_compare(unsigned int num) {
 			throw formatted_error("Unsupported type {}.", type);
 	}
 
-	bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
 	vector<tds::value> row1, row2;
 	list<vector<tds::value>> rows1, rows2;
 
@@ -460,6 +458,9 @@ static void do_compare(unsigned int num) {
 	};
 
 	try {
+		unsigned int num_rows1 = 0, num_rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0, rows_since_update = 0;
+		bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
+
 		fetch(rows1, t1_finished, t1_done, t1, row1);
 		fetch(rows2, t2_finished, t2_done, t2, row2);
 
