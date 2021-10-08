@@ -99,7 +99,7 @@ class sql_thread {
 public:
 	sql_thread(const std::string_view& server, const std::u16string_view& query);
 	~sql_thread();
-	void run();
+	void run() noexcept;
 	void wait_for(const std::function<void()>& func);
 
 	bool finished;

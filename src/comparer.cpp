@@ -34,7 +34,7 @@ void win_event::wait() {
 		throw formatted_error("CreateEvent returned {}.", ret);
 }
 
-sql_thread::sql_thread(const string_view& server, const u16string_view& query) : finished(false), query(query), tds(server, db_username, db_password, DB_APP), t([](sql_thread* st) {
+sql_thread::sql_thread(const string_view& server, const u16string_view& query) : finished(false), query(query), tds(server, db_username, db_password, DB_APP), t([](sql_thread* st) noexcept {
 		st->run();
 	}, this) {
 }
@@ -43,7 +43,7 @@ sql_thread::~sql_thread() {
 	t.join();
 }
 
-void sql_thread::run() {
+void sql_thread::run() noexcept {
 	try {
 		tds::query sq(tds, query);
 
