@@ -7,6 +7,7 @@
 #include <list>
 #include <thread>
 #include <memory>
+#include <mutex>
 #include <fmt/format.h>
 #include <fmt/compile.h>
 
