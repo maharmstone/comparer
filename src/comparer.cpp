@@ -158,13 +158,10 @@ ORDER BY index_columns.index_column_id)", object_id);
 		}
 	}
 
-	if (cols.empty())
-		throw formatted_error("No primary key found for {}.", tds::utf16_to_utf8(tbl1));
-
 	{
 		tds::query sq(tds, uR"(SELECT columns.name
 FROM )" + prefix + uR"(sys.columns
-JOIN )" + prefix + uR"(sys.indexes ON indexes.object_id = columns.object_id AND indexes.is_primary_key = 1
+LEFT JOIN )" + prefix + uR"(sys.indexes ON indexes.object_id = columns.object_id AND indexes.is_primary_key = 1
 LEFT JOIN )" + prefix + uR"(sys.index_columns ON index_columns.object_id = columns.object_id AND index_columns.index_id = indexes.index_id AND index_columns.column_id = columns.column_id
 WHERE columns.object_id = ? AND index_columns.column_id IS NULL
 ORDER BY columns.column_id)", object_id);
@@ -229,7 +226,7 @@ ORDER BY columns.column_id)", object_id);
 
 	q2 += u" ORDER BY ";
 
-	for (unsigned int i = 0; i < pk_columns; i++) {
+	for (unsigned int i = 0; i < ((pk_columns == 0) ? cols.size() : pk_columns); i++) {
 		if (i != 0) {
 			q1 += u", ";
 			q2 += u", ";
@@ -267,6 +264,14 @@ static string make_pk_string(const vector<tds::value>& row, unsigned int pk_colu
 	}
 
 	return ret;
+}
+
+static string pseudo_pk(unsigned int& rownum) {
+	auto s = fmt::format("{}", rownum);
+
+	rownum++;
+
+	return s;
 }
 
 static void do_compare(unsigned int num) {
@@ -353,7 +358,7 @@ static void do_compare(unsigned int num) {
 	};
 
 	try {
-		unsigned int num_rows1 = 0, num_rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0, rows_since_update = 0;
+		unsigned int num_rows1 = 0, num_rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0, rows_since_update = 0, rownum = 0;
 		bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
 
 		fetch(rows1, t1_finished, t1_done, t1, row1);
@@ -386,27 +391,29 @@ END
 
 		while (!t1_finished || !t2_finished) {
 			if (!t1_finished && !t2_finished) {
-				auto cmp = compare_pks(row1, row2, pk_columns);
+				auto cmp = compare_pks(row1, row2, pk_columns == 0 ? (unsigned int)row1.size() : pk_columns);
 
 				if (cmp == weak_ordering::equivalent) {
-					bool changed = false;
-					string pk;
+					if (pk_columns > 0) {
+						bool changed = false;
+						string pk;
 
-					for (unsigned int i = pk_columns; i < row1.size(); i++) {
-						const auto& v1 = row1[i];
-						const auto& v2 = row2[i];
+						for (unsigned int i = pk_columns; i < row1.size(); i++) {
+							const auto& v1 = row1[i];
+							const auto& v2 = row2[i];
 
-						if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && v1 != v2)) {
-							if (pk.empty())
-								pk = make_pk_string(row1, pk_columns);
+							if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && v1 != v2)) {
+								if (pk.empty())
+									pk = make_pk_string(row1, pk_columns);
 
-							res.emplace_back(num, pk, change::modified, i + 1, v1, v2, t1.names[i]);
-							changed = true;
+								res.emplace_back(num, pk, change::modified, i + 1, v1, v2, t1.names[i]);
+								changed = true;
+							}
 						}
-					}
 
-					if (changed)
-						changed_rows++;
+						if (changed)
+							changed_rows++;
+					}
 
 					num_rows1++;
 					num_rows2++;
@@ -414,7 +421,7 @@ END
 					fetch(rows1, t1_finished, t1_done, t1, row1);
 					fetch(rows2, t2_finished, t2_done, t2, row2);
 				} else if (cmp == weak_ordering::less) {
-					const auto& pk = make_pk_string(row1, pk_columns);
+					const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row1, pk_columns);
 
 					if (pk_columns == row1.size())
 						res.emplace_back(num, pk, change::removed, 0, nullptr, nullptr, nullptr);
@@ -434,7 +441,7 @@ END
 
 					fetch(rows1, t1_finished, t1_done, t1, row1);
 				} else {
-					const auto& pk = make_pk_string(row2, pk_columns);
+					const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row2, pk_columns);
 
 					if (pk_columns == row2.size())
 						res.emplace_back(num, pk, change::added, 0, nullptr, nullptr, nullptr);
@@ -455,7 +462,7 @@ END
 					fetch(rows2, t2_finished, t2_done, t2, row2);
 				}
 			} else if (!t1_finished) {
-				const auto& pk = make_pk_string(row1, pk_columns);
+				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row1, pk_columns);
 
 				if (pk_columns == row1.size())
 					res.emplace_back(num, pk, change::removed, 0, nullptr, nullptr, nullptr);
@@ -475,7 +482,7 @@ END
 
 				fetch(rows1, t1_finished, t1_done, t1, row1);
 			} else {
-				const auto& pk = make_pk_string(row2, pk_columns);
+				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row2, pk_columns);
 
 				if (pk_columns == row2.size())
 					res.emplace_back(num, pk, change::added, 0, nullptr, nullptr, nullptr);
