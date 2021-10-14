@@ -237,8 +237,17 @@ ORDER BY columns.column_id)", object_id);
 	}
 }
 
-static weak_ordering compare_pks(const vector<tds::value>& row1, const vector<tds::value>& row2, unsigned int pk_columns) {
-	for (unsigned int i = 0; i < pk_columns; i++) {
+static weak_ordering compare_cols(const vector<tds::value>& row1, const vector<tds::value>& row2, unsigned int columns) {
+	for (unsigned int i = 0; i < columns; i++) {
+		if (row1[i].is_null || row2[i].is_null) {
+			if (row1[i].is_null && row2[i].is_null)
+				continue;
+			else if (row1[i].is_null)
+				return weak_ordering::less;
+			else
+				return weak_ordering::greater;
+		}
+
 		auto ret = row1[i] <=> row2[i];
 
 		if (ret == partial_ordering::unordered)
@@ -391,7 +400,7 @@ END
 
 		while (!t1_finished || !t2_finished) {
 			if (!t1_finished && !t2_finished) {
-				auto cmp = compare_pks(row1, row2, pk_columns == 0 ? (unsigned int)row1.size() : pk_columns);
+				auto cmp = compare_cols(row1, row2, pk_columns == 0 ? (unsigned int)row1.size() : pk_columns);
 
 				if (cmp == weak_ordering::equivalent) {
 					if (pk_columns > 0) {
