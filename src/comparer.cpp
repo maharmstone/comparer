@@ -11,22 +11,6 @@ static const string DB_APP = "Janus";
 static unsigned int log_id = 0;
 static string db_server, db_username, db_password;
 
-win_event::win_event() : h(CreateEvent(nullptr, false, false, nullptr)) {
-	if (!h)
-		throw last_error("CreateEvent", GetLastError());
-}
-
-void win_event::set() noexcept {
-	SetEvent(h.get());
-}
-
-void win_event::wait() {
-	auto ret = WaitForSingleObject(h.get(), INFINITE);
-
-	if (ret != WAIT_OBJECT_0)
-		throw formatted_error("CreateEvent returned {}.", ret);
-}
-
 sql_thread::sql_thread(const string_view& server, const u16string_view& query) : finished(false), query(query), tds(server, db_username, db_password, DB_APP), t([](sql_thread* st) noexcept {
 		st->run();
 	}, this) {
@@ -76,13 +60,11 @@ void sql_thread::run() noexcept {
 					}
 				} while (sq.fetch_row_no_wait());
 
-				{
-					lock_guard<mutex> guard(lock);
+				lock_guard<mutex> guard(lock);
 
-					results.splice(results.end(), l);
-				}
+				results.splice(results.end(), l);
 
-				event.set();
+				cv.notify_one();
 			} while (!finished && sq.fetch_row());
 		}
 	} catch (...) {
@@ -90,13 +72,17 @@ void sql_thread::run() noexcept {
 	}
 
 	finished = true;
-	event.set();
+
+	lock_guard<mutex> guard(lock);
+	cv.notify_one();
 }
 
 void sql_thread::wait_for(const invocable auto& func) {
-	event.wait();
+	unique_lock<mutex> ul(lock);
 
-	lock_guard<mutex> guard(lock);
+	cv.wait(ul, [&]() {
+		return finished || !results.empty();
+	});
 
 	func();
 }

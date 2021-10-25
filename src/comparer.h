@@ -8,6 +8,7 @@
 #include <thread>
 #include <memory>
 #include <mutex>
+#include <condition_variable>
 #include <fmt/format.h>
 #include <fmt/compile.h>
 
@@ -85,30 +86,6 @@ public:
 	tds::value value1, value2, col_name;
 };
 
-class handle_closer {
-public:
-	typedef HANDLE pointer;
-
-	void operator()(HANDLE h) {
-		if (h == INVALID_HANDLE_VALUE)
-			return;
-
-		CloseHandle(h);
-	}
-};
-
-typedef std::unique_ptr<HANDLE, handle_closer> unique_handle;
-
-class win_event {
-public:
-	win_event();
-	void set() noexcept;
-	void wait();
-
-private:
-	unique_handle h;
-};
-
 class sql_thread {
 public:
 	sql_thread(const std::string_view& server, const std::u16string_view& query);
@@ -124,5 +101,5 @@ public:
 	std::vector<std::u16string> names;
 	std::list<std::vector<tds::value>> results;
 	std::mutex lock;
-	win_event event;
+	std::condition_variable cv;
 };
