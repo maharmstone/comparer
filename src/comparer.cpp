@@ -3,6 +3,7 @@
 #include <optional>
 #include <mutex>
 #include <array>
+#include <charconv>
 
 using namespace std;
 
@@ -554,9 +555,16 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	try {
-		num = stoul(argv[1]);
+	auto sv = string_view(argv[1]);
 
+	auto [ptr, ec] = from_chars(sv.data(), sv.data() + sv.length(), num);
+
+	if (ec != errc()) {
+		fmt::print(stderr, "Could not convert \"{}\" to integer.\n", sv);
+		return 1;
+	}
+
+	try {
 		auto db_server_env = getenv("DB_RMTSERVER");
 
 		if (!db_server_env)
