@@ -16,13 +16,17 @@ set(SRC_FILES
 
 add_executable(comparer ${SRC_FILES})
 
-add_definitions(-D_WIN32_WINNT=0x0602 -DNOMINMAX)
+if(WIN32)
+    add_definitions(-D_WIN32_WINNT=0x0602 -DNOMINMAX)
+endif()
 
 find_package(tdscpp REQUIRED)
 find_package(fmt REQUIRED)
+find_package(Threads REQUIRED)
 
 target_link_libraries(comparer tdscpp)
 target_link_libraries(comparer fmt::fmt-header-only)
+target_link_libraries(comparer Threads::Threads)
 
 if(NOT MSVC)
     target_compile_options(comparer PUBLIC -Wall -Werror=cast-function-type -Wno-expansion-to-defined -Wunused-parameter -Wtype-limits -Wextra -Wconversion -Wnoexcept)

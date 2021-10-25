@@ -1,6 +1,5 @@
 #pragma once
 
-#include <windows.h>
 #include <tdscpp.h>
 #include <string>
 #include <functional>
@@ -16,44 +15,6 @@ enum class change {
 	modified,
 	added,
 	removed
-};
-
-class last_error : public std::exception {
-public:
-	last_error(const std::string_view& function, int le) {
-		std::string nice_msg;
-
-		{
-			char16_t* fm;
-
-			if (FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr,
-				le, 0, reinterpret_cast<LPWSTR>(&fm), 0, nullptr)) {
-				try {
-					std::u16string_view s = fm;
-
-					while (!s.empty() && (s[s.length() - 1] == u'\r' || s[s.length() - 1] == u'\n')) {
-						s.remove_suffix(1);
-					}
-
-					nice_msg = tds::utf16_to_utf8(s);
-				} catch (...) {
-					LocalFree(fm);
-					throw;
-				}
-
-				LocalFree(fm);
-				}
-		}
-
-		msg = std::string(function) + " failed (error " + std::to_string(le) + (!nice_msg.empty() ? (", " + nice_msg) : "") + ").";
-	}
-
-	const char* what() const noexcept {
-		return msg.c_str();
-	}
-
-private:
-	std::string msg;
 };
 
 class _formatted_error : public std::exception {

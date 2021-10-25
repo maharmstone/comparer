@@ -546,28 +546,6 @@ END
 	}
 }
 
-static optional<u16string> get_environment_variable(const u16string& name) {
-	auto len = GetEnvironmentVariableW((WCHAR*)name.c_str(), nullptr, 0);
-
-	if (len == 0) {
-		if (GetLastError() == ERROR_ENVVAR_NOT_FOUND)
-			return nullopt;
-
-		return u"";
-	}
-
-	u16string ret(len, 0);
-
-	if (GetEnvironmentVariableW((WCHAR*)name.c_str(), (WCHAR*)ret.data(), len) == 0)
-		throw last_error("GetEnvironmentVariableW", GetLastError());
-
-	while (!ret.empty() && ret.back() == 0) {
-		ret.pop_back();
-	}
-
-	return ret;
-}
-
 int main(int argc, char* argv[]) {
 	unsigned int num;
 
@@ -579,25 +557,25 @@ int main(int argc, char* argv[]) {
 	try {
 		num = stoul(argv[1]);
 
-		auto db_server_env = get_environment_variable(u"DB_RMTSERVER");
+		auto db_server_env = getenv("DB_RMTSERVER");
 
-		if (!db_server_env.has_value())
+		if (!db_server_env)
 			throw runtime_error("Environment variable DB_RMTSERVER not set.");
 
-		db_server = tds::utf16_to_utf8(db_server_env.value());
+		db_server = db_server_env;
 
 		if (db_server == "(local)") // SQL Agent does this
 			db_server = "localhost";
 
-		auto db_username_env = get_environment_variable(u"DB_USERNAME");
+		auto db_username_env = getenv("DB_USERNAME");
 
-		if (db_username_env.has_value())
-			db_username = tds::utf16_to_utf8(db_username_env.value());
+		if (db_username_env)
+			db_username = db_username_env;
 
-		auto db_password_env = get_environment_variable(u"DB_PASSWORD");
+		auto db_password_env = getenv("DB_PASSWORD");
 
-		if (db_password_env.has_value())
-			db_password = tds::utf16_to_utf8(db_password_env.value());
+		if (db_password_env)
+			db_password = db_password_env;
 
 		do_compare(num);
 	} catch (const exception& e) {
