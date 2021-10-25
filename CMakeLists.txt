@@ -38,5 +38,7 @@ if(NOT MSVC)
     #target_compile_options(comparer PUBLIC -gcodeview)
     #target_link_options(comparer PUBLIC -gcodeview)
 else()
+	add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+
     target_link_options(comparer PUBLIC /MANIFEST:NO)
 endif()
