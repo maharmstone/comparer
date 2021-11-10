@@ -12,6 +12,9 @@ static const string DB_APP = "Janus";
 static unsigned int log_id = 0;
 static string db_server, db_username, db_password;
 
+static constexpr unsigned int FLOAT_BITS = 8; // FIXME - make option?
+static constexpr uint64_t FLOAT_BITS_MASK = ~((1 << FLOAT_BITS) - 1);
+
 sql_thread::sql_thread(const string_view& server, const u16string_view& query) : finished(false), query(query), tds(server, db_username, db_password, DB_APP), t([](sql_thread* st) noexcept {
 		st->run();
 	}, this) {
@@ -270,6 +273,32 @@ static string pseudo_pk(unsigned int& rownum) {
 	return s;
 }
 
+static bool value_cmp(const tds::value& v1, const tds::value& v2) {
+	if (v1.type != tds::sql_type::FLOAT && v1.type != tds::sql_type::REAL && v1.type != tds::sql_type::FLTN)
+		return v1 == v2;
+
+	// for FLOATs, allow some leeway on values
+
+	// FIXME - for REALs, use float rather than double
+
+	auto d1 = (double)v1;
+	auto d2 = (double)v2;
+
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+#endif
+
+	auto i1 = *reinterpret_cast<uint64_t*>(&d1);
+	auto i2 = *reinterpret_cast<uint64_t*>(&d2);
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
+
+	return (i1 & FLOAT_BITS_MASK) == (i2 & FLOAT_BITS_MASK);
+}
+
 static void do_compare(unsigned int num) {
 	list<result> res;
 
@@ -398,7 +427,7 @@ END
 							const auto& v1 = row1[i];
 							const auto& v2 = row2[i];
 
-							if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && v1 != v2)) {
+							if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && !value_cmp(v1, v2))) {
 								if (pk.empty())
 									pk = make_pk_string(row1, pk_columns);
 
