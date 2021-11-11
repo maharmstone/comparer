@@ -12,9 +12,6 @@ static const string DB_APP = "Janus";
 static unsigned int log_id = 0;
 static string db_server, db_username, db_password;
 
-static constexpr unsigned int FLOAT_BITS = 8; // FIXME - make option?
-static constexpr uint64_t FLOAT_BITS_MASK = ~((1 << FLOAT_BITS) - 1);
-
 sql_thread::sql_thread(const string_view& server, const u16string_view& query) : finished(false), query(query), tds(server, db_username, db_password, DB_APP), t([](sql_thread* st) noexcept {
 		st->run();
 	}, this) {
@@ -289,14 +286,16 @@ static bool value_cmp(const tds::value& v1, const tds::value& v2) {
 #pragma GCC diagnostic ignored "-Wstrict-aliasing"
 #endif
 
-	auto i1 = *reinterpret_cast<uint64_t*>(&d1);
-	auto i2 = *reinterpret_cast<uint64_t*>(&d2);
+	auto i1 = *reinterpret_cast<int64_t*>(&d1);
+	auto i2 = *reinterpret_cast<int64_t*>(&d2);
 
 #ifdef __GNUC__
 #pragma GCC diagnostic pop
 #endif
 
-	return (i1 & FLOAT_BITS_MASK) == (i2 & FLOAT_BITS_MASK);
+	auto diff = i1 - i2;
+
+	return diff < 128 && diff >= -127;
 }
 
 static void do_compare(unsigned int num) {
