@@ -90,6 +90,31 @@ void sql_thread::wait_for(const invocable auto& func) {
 	func();
 }
 
+static string sanitize_identifier(string_view sv) {
+	if (sv.empty() || sv.front() != '[')
+		return string{sv};
+
+	if (sv.back() != ']')
+		throw formatted_error("Malformed identifier {}.", sv);
+
+	sv.remove_prefix(1);
+	sv.remove_suffix(1);
+
+	string s;
+
+	s.reserve(sv.size());
+
+	for (unsigned int i = 0; i < sv.size(); i++) {
+		if (sv[i] == '[' && i < sv.size() - 1 && sv[i+1] == '[') {
+			s += '[';
+			i++;
+		} else
+			s += sv[i];
+	}
+
+	return s;
+}
+
 static void create_queries(tds::tds& tds, const u16string_view& tbl1, const u16string_view& tbl2,
 						   u16string& q1, u16string& q2, string& server1, string& server2,
 						   unsigned int& pk_columns) {
@@ -106,7 +131,7 @@ static void create_queries(tds::tds& tds, const u16string_view& tbl1, const u16s
 		prefix = u16string(onp.db) + u".";
 
 	if (!onp.server.empty())
-		server1 = tds::utf16_to_utf8(onp.server);
+		server1 = sanitize_identifier(tds::utf16_to_utf8(onp.server));
 	else
 		server1 = db_server;
 
@@ -195,7 +220,7 @@ ORDER BY columns.column_id)"}, object_id);
 	onp = tds::parse_object_name(tbl2);
 
 	if (!onp.server.empty()) {
-		server2 = tds::utf16_to_utf8(onp.server);
+		server2 = sanitize_identifier(tds::utf16_to_utf8(onp.server));
 
 		if (!onp.db.empty()) {
 			q2 += onp.db;
