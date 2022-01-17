@@ -12,7 +12,7 @@ static const string DB_APP = "Janus";
 static unsigned int log_id = 0;
 static string db_server, db_username, db_password;
 
-sql_thread::sql_thread(const string_view& server, const u16string_view& query) : finished(false), query(query), tds(server, db_username, db_password, DB_APP), t([](sql_thread* st) noexcept {
+sql_thread::sql_thread(const u16string_view& query, unique_ptr<tds::tds>& tds) : finished(false), query(query), uptds(move(tds)), t([](sql_thread* st) noexcept {
 		st->run();
 	}, this) {
 }
@@ -23,6 +23,8 @@ sql_thread::~sql_thread() {
 
 void sql_thread::run() noexcept {
 	try {
+		auto& tds = *uptds.get();
+
 		tds::query sq(tds, tds::no_check{query});
 
 		auto b = sq.fetch_row();
@@ -349,8 +351,11 @@ static void do_compare(unsigned int num) {
 	vector<tds::value> row1, row2;
 	list<vector<tds::value>> rows1, rows2;
 
-	sql_thread t1(server1, q1);
-	sql_thread t2(server2, q2);
+	auto tds1 = make_unique<tds::tds>(server1, db_username, db_password, DB_APP);
+	auto tds2 = make_unique<tds::tds>(server2, db_username, db_password, DB_APP);
+
+	sql_thread t1(q1, tds1);
+	sql_thread t2(q2, tds2);
 
 	auto fetch = [](auto& rows, bool& finished, bool& done, sql_thread& t, auto& row) {
 		while (rows.empty() && !finished) {
