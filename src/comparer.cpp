@@ -136,57 +136,63 @@ static void create_queries(tds::tds& tds, const u16string_view& tbl1, const u16s
 		server1 = db_server;
 
 	{
-		optional<tds::query> sq2;
 		optional<tds::tds> tds2;
 
-		if (!onp.server.empty()) {
+		if (!onp.server.empty())
 			tds2.emplace(server1, db_username, db_password, DB_APP);
 
-			sq2.emplace(*tds2, tds::no_check{uR"(SELECT object_id
+		tds::tds& t = !onp.server.empty() ? *tds2 : tds;
+
+		{
+			optional<tds::query> sq2;
+
+			if (!onp.server.empty()) {
+				sq2.emplace(t, tds::no_check{uR"(SELECT object_id
 FROM )" + prefix + uR"(sys.objects
 JOIN )" + prefix + uR"(sys.schemas ON schemas.schema_id = objects.schema_id
 WHERE objects.name = PARSENAME(?, 1) AND
 schemas.name = PARSENAME(?, 2))"}, tbl1, tbl1);
-		} else
-			sq2.emplace(tds, tds::no_check{"SELECT OBJECT_ID(?)"}, tbl1);
+			} else
+				sq2.emplace(t, tds::no_check{"SELECT OBJECT_ID(?)"}, tbl1);
 
-		auto& sq = sq2.value();
+			auto& sq = sq2.value();
 
-		if (!sq.fetch_row() || sq[0].is_null)
-			throw formatted_error("Could not get object ID for {}.", tds::utf16_to_utf8(tbl1));
+			if (!sq.fetch_row() || sq[0].is_null)
+				throw formatted_error("Could not get object ID for {}.", tds::utf16_to_utf8(tbl1));
 
-		object_id = (int64_t)sq[0];
-	}
+			object_id = (int64_t)sq[0];
+		}
 
-	{
-		tds::query sq(tds, tds::no_check{uR"(SELECT columns.name
+		{
+			tds::query sq(t, tds::no_check{uR"(SELECT columns.name
 FROM )" + prefix + uR"(sys.index_columns
 JOIN )" + prefix + uR"(sys.indexes ON indexes.object_id = index_columns.object_id AND indexes.index_id = index_columns.index_id
 JOIN )" + prefix + uR"(sys.columns ON columns.object_id = index_columns.object_id AND columns.column_id = index_columns.column_id
 WHERE index_columns.object_id = ? AND indexes.is_primary_key = 1
 ORDER BY index_columns.index_column_id)"}, object_id);
 
-		while (sq.fetch_row()) {
-			cols.emplace_back(tds::escape((u16string)sq[0]));
-			pk_columns++;
+			while (sq.fetch_row()) {
+				cols.emplace_back(tds::escape((u16string)sq[0]));
+				pk_columns++;
+			}
 		}
-	}
 
-	{
-		tds::query sq(tds, tds::no_check{uR"(SELECT columns.name
+		{
+			tds::query sq(t, tds::no_check{uR"(SELECT columns.name
 FROM )" + prefix + uR"(sys.columns
 LEFT JOIN )" + prefix + uR"(sys.indexes ON indexes.object_id = columns.object_id AND indexes.is_primary_key = 1
 LEFT JOIN )" + prefix + uR"(sys.index_columns ON index_columns.object_id = columns.object_id AND index_columns.index_id = indexes.index_id AND index_columns.column_id = columns.column_id
 WHERE columns.object_id = ? AND index_columns.column_id IS NULL
 ORDER BY columns.column_id)"}, object_id);
 
-		while (sq.fetch_row()) {
-			auto s = (u16string)sq[0];
+			while (sq.fetch_row()) {
+				auto s = (u16string)sq[0];
 
-			if (s == u"Data Load Date" || s == u"data_load_date") // FIXME - option for this?
-				continue;
+				if (s == u"Data Load Date" || s == u"data_load_date") // FIXME - option for this?
+					continue;
 
-			cols.emplace_back(tds::escape(s));
+				cols.emplace_back(tds::escape(s));
+			}
 		}
 	}
 
