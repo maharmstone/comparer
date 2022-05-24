@@ -163,8 +163,10 @@ schemas.name = PARSENAME(?, 2))"}, tbl1, tbl1);
 			object_id = (int64_t)sq[0];
 		}
 
+		optional<int32_t> index_id;
+
 		{
-			tds::query sq(t, tds::no_check{uR"(SELECT columns.name
+			tds::query sq(t, tds::no_check{uR"(SELECT columns.name, indexes.index_id
 FROM )" + prefix + uR"(sys.index_columns
 JOIN )" + prefix + uR"(sys.indexes ON indexes.object_id = index_columns.object_id AND indexes.index_id = index_columns.index_id
 JOIN )" + prefix + uR"(sys.columns ON columns.object_id = index_columns.object_id AND columns.column_id = index_columns.column_id
@@ -172,13 +174,16 @@ WHERE index_columns.object_id = ? AND indexes.is_primary_key = 1
 ORDER BY index_columns.index_column_id)"}, object_id);
 
 			while (sq.fetch_row()) {
+				if (!index_id.has_value())
+					index_id = (int32_t)sq[1];
+
 				cols.emplace_back(tds::escape((u16string)sq[0]));
 				pk_columns++;
 			}
 		}
 
-		if (pk_columns == 0) { // if no primary key, look for unique key
-			tds::query sq(t, tds::no_check{uR"(SELECT columns.name
+		if (!index_id.has_value()) { // if no primary key, look for unique key
+			tds::query sq(t, tds::no_check{uR"(SELECT columns.name, indexes.index_id
 FROM )" + prefix + uR"(sys.indexes
 JOIN )" + prefix + uR"(sys.index_columns ON index_columns.object_id = indexes.object_id AND index_columns.index_id = indexes.index_id
 JOIN )" + prefix + uR"(sys.columns ON columns.object_id = indexes.object_id AND columns.column_id = index_columns.column_id
@@ -191,6 +196,9 @@ WHERE indexes.object_id = ? AND indexes.index_id = (
 ORDER BY index_columns.index_column_id)"}, object_id, object_id);
 
 			while (sq.fetch_row()) {
+				if (!index_id.has_value())
+					index_id = (int32_t)sq[1];
+
 				cols.emplace_back(tds::escape((u16string)sq[0]));
 				pk_columns++;
 			}
@@ -199,10 +207,9 @@ ORDER BY index_columns.index_column_id)"}, object_id, object_id);
 		{
 			tds::query sq(t, tds::no_check{uR"(SELECT columns.name
 FROM )" + prefix + uR"(sys.columns
-LEFT JOIN )" + prefix + uR"(sys.indexes ON indexes.object_id = columns.object_id AND indexes.is_primary_key = 1
-LEFT JOIN )" + prefix + uR"(sys.index_columns ON index_columns.object_id = columns.object_id AND index_columns.index_id = indexes.index_id AND index_columns.column_id = columns.column_id
+LEFT JOIN )" + prefix + uR"(sys.index_columns ON index_columns.object_id = columns.object_id AND index_columns.index_id = ? AND index_columns.column_id = columns.column_id
 WHERE columns.object_id = ? AND index_columns.column_id IS NULL
-ORDER BY columns.column_id)"}, object_id);
+ORDER BY columns.column_id)"}, index_id, object_id);
 
 			while (sq.fetch_row()) {
 				auto s = (u16string)sq[0];
