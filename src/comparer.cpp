@@ -177,6 +177,25 @@ ORDER BY index_columns.index_column_id)"}, object_id);
 			}
 		}
 
+		if (pk_columns == 0) { // if no primary key, look for unique key
+			tds::query sq(t, tds::no_check{uR"(SELECT columns.name
+FROM )" + prefix + uR"(sys.indexes
+JOIN )" + prefix + uR"(sys.index_columns ON index_columns.object_id = indexes.object_id AND index_columns.index_id = indexes.index_id
+JOIN )" + prefix + uR"(sys.columns ON columns.object_id = indexes.object_id AND columns.column_id = index_columns.column_id
+WHERE indexes.object_id = ? AND indexes.index_id = (
+	SELECT MIN(index_id)
+	FROM )" + prefix + uR"(sys.indexes
+	WHERE object_id = ? AND
+	is_unique = 1
+)
+ORDER BY index_columns.index_column_id)"}, object_id, object_id);
+
+			while (sq.fetch_row()) {
+				cols.emplace_back(tds::escape((u16string)sq[0]));
+				pk_columns++;
+			}
+		}
+
 		{
 			tds::query sq(t, tds::no_check{uR"(SELECT columns.name
 FROM )" + prefix + uR"(sys.columns
