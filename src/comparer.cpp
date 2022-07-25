@@ -357,9 +357,29 @@ static bool value_cmp(const tds::value& v1, const tds::value& v2) {
 	return diff < 128 && diff >= -127;
 }
 
-static void do_compare(unsigned int num) {
-	list<vector<tds::value>> res;
+void bcp_thread::run() noexcept {
+	try {
+		tds::tds tds(db_server, db_username, db_password, DB_APP);
 
+		do {
+			decltype(res) local_res;
+
+			ev.wait();
+
+			{
+				lock_guard<mutex> lg(lock);
+				local_res.splice(local_res.end(), res);
+			}
+
+			if (!local_res.empty())
+				tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, local_res);
+		} while (running);
+	} catch (...) {
+		exc = current_exception();
+	}
+}
+
+static void do_compare(unsigned int num) {
 	tds::tds tds(db_server, db_username, db_password, DB_APP);
 
 	u16string q1, q2;
@@ -413,6 +433,7 @@ static void do_compare(unsigned int num) {
 
 	sql_thread t1(q1, tds1);
 	sql_thread t2(q2, tds2);
+	bcp_thread b;
 
 	auto fetch = [](auto& rows, bool& finished, bool& done, sql_thread& t, auto& row) {
 		while (rows.empty() && !finished) {
@@ -474,6 +495,11 @@ END
 )", num, num);
 
 		while (!t1_finished || !t2_finished) {
+			list<vector<tds::value>> local_res;
+
+			if (b.exc)
+				rethrow_exception(b.exc);
+
 			if (!t1_finished && !t2_finished) {
 				auto cmp = compare_cols(row1, row2, pk_columns == 0 ? (unsigned int)row1.size() : pk_columns);
 
@@ -490,7 +516,7 @@ END
 								if (pk.empty())
 									pk = make_pk_string(row1, pk_columns);
 
-								res.push_back({num, pk, "modified", i + 1, v1, v2, t1.names[i]});
+								local_res.push_back({num, pk, "modified", i + 1, v1, v2, t1.names[i]});
 								changed = true;
 							}
 						}
@@ -508,15 +534,15 @@ END
 					const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row1, pk_columns);
 
 					if (pk_columns == row1.size())
-						res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
+						local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
 					else {
 						for (unsigned int i = pk_columns; i < row1.size(); i++) {
 							const auto& v1 = row1[i];
 
 							if (v1.is_null)
-								res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.names[i]});
+								local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.names[i]});
 							else
-								res.push_back({num, pk, "removed", i + 1, (string)v1, nullptr, t1.names[i]});
+								local_res.push_back({num, pk, "removed", i + 1, (string)v1, nullptr, t1.names[i]});
 						}
 					}
 
@@ -528,15 +554,15 @@ END
 					const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row2, pk_columns);
 
 					if (pk_columns == row2.size())
-						res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
+						local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
 					else {
 						for (unsigned int i = pk_columns; i < row2.size(); i++) {
 							const auto& v2 = row2[i];
 
 							if (v2.is_null)
-								res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.names[i]});
+								local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.names[i]});
 							else
-								res.push_back({num, pk, "added", i + 1, nullptr, (string)v2, t2.names[i]});
+								local_res.push_back({num, pk, "added", i + 1, nullptr, (string)v2, t2.names[i]});
 						}
 					}
 
@@ -549,15 +575,15 @@ END
 				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row1, pk_columns);
 
 				if (pk_columns == row1.size())
-					res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
+					local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
 				else {
 					for (unsigned int i = pk_columns; i < row1.size(); i++) {
 						const auto& v1 = row1[i];
 
 						if (v1.is_null)
-							res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.names[i]});
+							local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.names[i]});
 						else
-							res.push_back({num, pk, "removed", i + 1, (string)v1, nullptr, t1.names[i]});
+							local_res.push_back({num, pk, "removed", i + 1, (string)v1, nullptr, t1.names[i]});
 					}
 				}
 
@@ -569,15 +595,15 @@ END
 				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row2, pk_columns);
 
 				if (pk_columns == row2.size())
-					res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
+					local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
 				else {
 					for (unsigned int i = pk_columns; i < row2.size(); i++) {
 						const auto& v2 = row2[i];
 
 						if (v2.is_null)
-							res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.names[i]});
+							local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.names[i]});
 						else
-							res.push_back({num, pk, "added", i + 1, nullptr, (string)v2, t2.names[i]});
+							local_res.push_back({num, pk, "added", i + 1, nullptr, (string)v2, t2.names[i]});
 					}
 				}
 
@@ -587,14 +613,14 @@ END
 				fetch(rows2, t2_finished, t2_done, t2, row2);
 			}
 
-			if (res.size() > 10000) { // flush
-				tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, res);
-				res.clear();
+			if (!local_res.empty()) {
+				lock_guard<mutex> lg(b.lock);
 
-				tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
+				b.res.splice(b.res.end(), local_res);
+				b.ev.set();
+			}
 
-				rows_since_update = 0;
-			} else if (rows_since_update > 1000) {
+			if (rows_since_update > 1000) {
 				tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
 
 				rows_since_update = 0;
@@ -602,8 +628,12 @@ END
 				rows_since_update++;
 		}
 
-		if (!res.empty())
-			tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, res);
+		{
+			lock_guard<mutex> lg(b.lock);
+
+			b.running = false;
+			b.ev.set();
+		}
 
 		tds.run("UPDATE Comparer.log SET success=1, rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE(), error=NULL WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
 	} catch (...) {
