@@ -34,14 +34,13 @@ private:
 class sql_thread {
 public:
 	sql_thread(const std::u16string_view& query, std::unique_ptr<tds::tds>& tds);
-	~sql_thread();
 	void run() noexcept;
 	void wait_for(const std::invocable auto& func);
 
 	bool finished;
 	std::u16string query;
 	std::unique_ptr<tds::tds> uptds;
-	std::thread t;
+	std::jthread t;
 	std::exception_ptr ex;
 	std::vector<std::u16string> names;
 	std::list<std::vector<tds::value>> results;

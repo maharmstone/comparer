@@ -17,10 +17,6 @@ sql_thread::sql_thread(const u16string_view& query, unique_ptr<tds::tds>& tds) :
 	}, this) {
 }
 
-sql_thread::~sql_thread() {
-	t.join();
-}
-
 void sql_thread::run() noexcept {
 	try {
 		auto& tds = *uptds.get();
