@@ -421,8 +421,6 @@ static void do_compare(unsigned int num) {
 			if (finished)
 				return;
 
-			decltype(t.results) tmp;
-
 			t.wait_for([&]() noexcept {
 				done = t.finished;
 
