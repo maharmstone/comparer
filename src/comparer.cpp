@@ -367,8 +367,20 @@ void bcp_thread::run() noexcept {
 				local_res.splice(local_res.end(), res);
 			}
 
-			if (!local_res.empty())
-				tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, local_res);
+			while (!local_res.empty()) {
+				decltype(local_res) res2;
+
+				if (local_res.size() <= 10000)
+					res2.swap(local_res);
+				else {
+					for (unsigned int i = 0; i < 10000; i++) {
+						res2.push_back(move(local_res.front()));
+						local_res.pop_front();
+					}
+				}
+
+				tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, res2);
+			}
 		} while (running);
 	} catch (...) {
 		exc = current_exception();
