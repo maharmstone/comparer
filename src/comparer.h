@@ -33,20 +33,6 @@ private:
 
 #define formatted_error(s, ...) _formatted_error(FMT_COMPILE(s), ##__VA_ARGS__)
 
-class result {
-public:
-	result(int query, const std::string& primary_key, enum change change, unsigned int col,
-		   const tds::value& value1, const tds::value& value2, const tds::value& col_name) :
-		query(query), primary_key(primary_key), change(change), col(col), value1(value1), value2(value2), col_name(col_name) {
-	}
-
-	int query;
-	std::string primary_key;
-	enum change change;
-	unsigned int col;
-	tds::value value1, value2, col_name;
-};
-
 class sql_thread {
 public:
 	sql_thread(const std::u16string_view& query, std::unique_ptr<tds::tds>& tds);

@@ -358,7 +358,7 @@ static bool value_cmp(const tds::value& v1, const tds::value& v2) {
 }
 
 static void do_compare(unsigned int num) {
-	list<result> res;
+	list<vector<tds::value>> res;
 
 	tds::tds tds(db_server, db_username, db_password, DB_APP);
 
@@ -492,7 +492,7 @@ END
 								if (pk.empty())
 									pk = make_pk_string(row1, pk_columns);
 
-								res.emplace_back(num, pk, change::modified, i + 1, v1, v2, t1.names[i]);
+								res.push_back({num, pk, "modified", i + 1, v1, v2, t1.names[i]});
 								changed = true;
 							}
 						}
@@ -510,15 +510,15 @@ END
 					const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row1, pk_columns);
 
 					if (pk_columns == row1.size())
-						res.emplace_back(num, pk, change::removed, 0, nullptr, nullptr, nullptr);
+						res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
 					else {
 						for (unsigned int i = pk_columns; i < row1.size(); i++) {
 							const auto& v1 = row1[i];
 
 							if (v1.is_null)
-								res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, t1.names[i]);
+								res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.names[i]});
 							else
-								res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, t1.names[i]);
+								res.push_back({num, pk, "removed", i + 1, (string)v1, nullptr, t1.names[i]});
 						}
 					}
 
@@ -530,15 +530,15 @@ END
 					const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row2, pk_columns);
 
 					if (pk_columns == row2.size())
-						res.emplace_back(num, pk, change::added, 0, nullptr, nullptr, nullptr);
+						res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
 					else {
 						for (unsigned int i = pk_columns; i < row2.size(); i++) {
 							const auto& v2 = row2[i];
 
 							if (v2.is_null)
-								res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, t2.names[i]);
+								res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.names[i]});
 							else
-								res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, t2.names[i]);
+								res.push_back({num, pk, "added", i + 1, nullptr, (string)v2, t2.names[i]});
 						}
 					}
 
@@ -551,15 +551,15 @@ END
 				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row1, pk_columns);
 
 				if (pk_columns == row1.size())
-					res.emplace_back(num, pk, change::removed, 0, nullptr, nullptr, nullptr);
+					res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
 				else {
 					for (unsigned int i = pk_columns; i < row1.size(); i++) {
 						const auto& v1 = row1[i];
 
 						if (v1.is_null)
-							res.emplace_back(num, pk, change::removed, i + 1, nullptr, nullptr, t1.names[i]);
+							res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.names[i]});
 						else
-							res.emplace_back(num, pk, change::removed, i + 1, (string)v1, nullptr, t1.names[i]);
+							res.push_back({num, pk, "removed", i + 1, (string)v1, nullptr, t1.names[i]});
 					}
 				}
 
@@ -571,15 +571,15 @@ END
 				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row2, pk_columns);
 
 				if (pk_columns == row2.size())
-					res.emplace_back(num, pk, change::added, 0, nullptr, nullptr, nullptr);
+					res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
 				else {
 					for (unsigned int i = pk_columns; i < row2.size(); i++) {
 						const auto& v2 = row2[i];
 
 						if (v2.is_null)
-							res.emplace_back(num, pk, change::added, i + 1, nullptr, nullptr, t2.names[i]);
+							res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.names[i]});
 						else
-							res.emplace_back(num, pk, change::added, i + 1, nullptr, (string)v2, t2.names[i]);
+							res.push_back({num, pk, "added", i + 1, nullptr, (string)v2, t2.names[i]});
 					}
 				}
 
@@ -590,18 +590,8 @@ END
 			}
 
 			if (res.size() > 10000) { // flush
-				vector<vector<tds::value>> v;
-
-				v.reserve(res.size());
-
-				while (!res.empty()) {
-					auto r = move(res.front());
-					res.pop_front();
-
-					v.push_back({r.query, r.primary_key, r.change == change::added ? "added" : (r.change == change::removed ? "removed" : "modified"), r.col, r.value1, r.value2, r.col_name});
-				}
-
-				tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, v);
+				tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, res);
+				res.clear();
 
 				tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
 
@@ -614,20 +604,8 @@ END
 				rows_since_update++;
 		}
 
-		if (!res.empty()) {
-			vector<vector<tds::value>> v;
-
-			v.reserve(res.size());
-
-			while (!res.empty()) {
-				auto r = move(res.front());
-				res.pop_front();
-
-				v.push_back({r.query, r.primary_key, r.change == change::added ? "added" : (r.change == change::removed ? "removed" : "modified"), r.col, r.value1, r.value2, r.col_name});
-			}
-
-			tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, v);
-		}
+		if (!res.empty())
+			tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, res);
 
 		tds.run("UPDATE Comparer.log SET success=1, rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE(), error=NULL WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
 	} catch (...) {
