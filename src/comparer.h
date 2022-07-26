@@ -196,9 +196,8 @@ public:
 	bool running = true;
 	std::mutex lock;
 	std::exception_ptr exc;
+	std::jthread t;
 
 private:
 	void run() noexcept;
-
-	std::jthread t;
 };

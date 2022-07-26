@@ -475,8 +475,10 @@ static void do_compare(unsigned int num) {
 		rows.pop_front();
 	};
 
+	unsigned int num_rows1 = 0, num_rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0;
+
 	try {
-		unsigned int num_rows1 = 0, num_rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0, rows_since_update = 0, rownum = 0;
+		unsigned int rows_since_update = 0, rownum = 0;
 		bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
 
 		fetch(rows1, t1_finished, t1_done, t1, row1);
@@ -647,13 +649,18 @@ END
 			b.running = false;
 			b.ev.set();
 		}
-
-		tds.run("UPDATE Comparer.log SET success=1, rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE(), error=NULL WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
 	} catch (...) {
 		t1.finished = true;
 		t2.finished = true;
 		throw;
 	}
+
+	b.t.join();
+
+	if (b.exc)
+		rethrow_exception(b.exc);
+
+	tds.run("UPDATE Comparer.log SET success=1, rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE(), error=NULL WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
 }
 
 int main(int argc, char* argv[]) {
