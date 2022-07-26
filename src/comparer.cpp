@@ -354,6 +354,8 @@ static bool value_cmp(const tds::value& v1, const tds::value& v2) {
 }
 
 void bcp_thread::run() noexcept {
+	static const unsigned int MAX_BUF_ROWS = 100000;
+
 	try {
 		tds::tds tds(db_server, db_username, db_password, DB_APP);
 
@@ -362,10 +364,13 @@ void bcp_thread::run() noexcept {
 
 			ev.wait();
 
-			{
-				lock_guard<mutex> lg(lock);
-				local_res.splice(local_res.end(), res);
-			}
+			optional<lock_guard<mutex>> lg(lock);
+
+			local_res.splice(local_res.end(), res);
+
+			// if buffer full, pause other threads by keeping hold of lock
+			if (res.size() + local_res.size() < MAX_BUF_ROWS)
+				lg.reset();
 
 			while (!local_res.empty()) {
 				decltype(local_res) res2;
