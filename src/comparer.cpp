@@ -392,6 +392,33 @@ void bcp_thread::run() noexcept {
 	}
 }
 
+static void repartition_results_table(tds::tds& tds, unsigned int num) {
+	unsigned int func_num;
+	bool part1_found;
+
+	{
+		tds::query sq(tds, "SELECT function_id FROM sys.partition_functions WHERE name = 'comparer_part_func'");
+
+		if (!sq.fetch_row()) // not partitioned
+			return;
+
+		func_num = (unsigned int)sq[0];
+	}
+
+	{
+		tds::query sq(tds, "SELECT * FROM sys.partition_range_values WHERE function_id = ? AND value = ?", func_num, num);
+
+		part1_found = sq.fetch_row();
+	}
+
+	if (!part1_found) {
+		tds.run("ALTER PARTITION SCHEME comparer_part_scheme NEXT USED [PRIMARY]");
+		tds.run("ALTER PARTITION FUNCTION comparer_part_func() SPLIT RANGE(?)", num);
+	}
+
+	// FIXME - part2
+}
+
 static void do_compare(unsigned int num) {
 	tds::tds tds(db_server, db_username, db_password, DB_APP);
 
@@ -437,6 +464,8 @@ static void do_compare(unsigned int num) {
 		} else
 			throw formatted_error("Unsupported type {}.", type);
 	}
+
+	repartition_results_table(tds, num);
 
 	vector<tds::value> row1, row2;
 	list<vector<tds::value>> rows1, rows2;
