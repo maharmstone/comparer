@@ -442,6 +442,30 @@ static void repartition_results_table(tds::tds& tds, unsigned int num) {
 }
 
 static void delete_old_results(tds::tds& tds, unsigned int num) {
+	bool partitioned;
+	int32_t part_num;
+
+	{
+		tds::query sq(tds, "SELECT function_id FROM sys.partition_functions WHERE name = 'comparer_part_func'");
+
+		partitioned = sq.fetch_row();
+	}
+
+	if (partitioned) {
+		{
+			tds::query sq(tds, "SELECT $PARTITION.comparer_part_func(?)", num);
+
+			if (!sq.fetch_row())
+				throw runtime_error("Unable to get partition number to truncate.");
+
+			part_num = (int32_t)sq[0];
+		}
+
+		tds.run("TRUNCATE TABLE Comparer.results WITH (PARTITIONS(?))", part_num);
+
+		return;
+	}
+
 	tds.run(R"(
 WHILE 1 = 1
 BEGIN
