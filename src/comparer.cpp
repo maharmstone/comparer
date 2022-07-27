@@ -441,6 +441,24 @@ static void repartition_results_table(tds::tds& tds, unsigned int num) {
 	tds.run("ALTER PARTITION FUNCTION comparer_part_func() SPLIT RANGE(?)", next_num);
 }
 
+static void delete_old_results(tds::tds& tds, unsigned int num) {
+	tds.run(R"(
+WHILE 1 = 1
+BEGIN
+	BEGIN TRANSACTION;
+
+	DELETE TOP (100000)
+	FROM Comparer.results
+	WHERE query=?;
+
+	COMMIT;
+
+	IF (SELECT COUNT(*) FROM Comparer.results WHERE query=?) = 0
+		BREAK;
+END
+)", num, num);
+}
+
 static void do_compare(unsigned int num) {
 	tds::tds tds(db_server, db_username, db_password, DB_APP);
 
@@ -544,21 +562,7 @@ static void do_compare(unsigned int num) {
 			log_id = (unsigned int)sq[0];
 		}
 
-		tds.run(R"(
-WHILE 1 = 1
-BEGIN
-	BEGIN TRANSACTION;
-
-	DELETE TOP (100000)
-	FROM Comparer.results
-	WHERE query=?;
-
-	COMMIT;
-
-	IF (SELECT COUNT(*) FROM Comparer.results WHERE query=?) = 0
-		BREAK;
-END
-)", num, num);
+		delete_old_results(tds, num);
 
 		while (!t1_finished || !t2_finished) {
 			list<vector<tds::value>> local_res;
