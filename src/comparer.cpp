@@ -417,7 +417,8 @@ static void repartition_results_table(tds::tds& tds, unsigned int num) {
 	}
 
 	{
-		tds::query sq(tds, "SELECT MIN(query) FROM Comparer.results WHERE query > ?", num);
+		// parameterization slows this down
+		tds::query sq(tds, tds::no_check{"SELECT MIN(query) FROM Comparer.results WHERE query > " + to_string(num)});
 
 		if (!sq.fetch_row())
 			return;
