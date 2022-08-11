@@ -362,7 +362,8 @@ void bcp_thread::run() noexcept {
 		do {
 			decltype(res) local_res;
 
-			ev.wait();
+			if (running)
+				ev.wait();
 
 			optional<lock_guard<mutex>> lg(lock);
 
@@ -386,7 +387,16 @@ void bcp_thread::run() noexcept {
 
 				tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, res2);
 			}
-		} while (running);
+
+			lg.reset();
+
+			if (!running) {
+				lock_guard<mutex> lg(lock);
+
+				if (res.empty())
+					break;
+			}
+		} while (true);
 	} catch (...) {
 		exc = current_exception();
 	}
