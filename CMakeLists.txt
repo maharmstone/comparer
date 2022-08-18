@@ -12,8 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
 set(SRC_FILES
-    src/comparer.cpp
-    src/event.cpp)
+    src/comparer.cpp)
 
 add_executable(comparer ${SRC_FILES})
 

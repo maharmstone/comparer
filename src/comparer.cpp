@@ -353,7 +353,7 @@ static bool value_cmp(const tds::value& v1, const tds::value& v2) {
 	return diff < 128 && diff >= -127;
 }
 
-void bcp_thread::run() noexcept {
+void bcp_thread::run(stop_token stop) noexcept {
 	static const unsigned int MAX_BUF_ROWS = 100000;
 
 	try {
@@ -361,17 +361,26 @@ void bcp_thread::run() noexcept {
 
 		do {
 			decltype(res) local_res;
+			bool wait;
 
-			if (running)
-				ev.wait();
+			{
+				unique_lock ul(lock);
 
-			optional<lock_guard<mutex>> lg(lock);
+				cv.wait(ul, stop, [&]{ return !res.empty(); });
 
-			local_res.splice(local_res.end(), res);
+				local_res.splice(local_res.end(), res);
 
-			// if buffer full, pause other threads by keeping hold of lock
-			if (res.size() + local_res.size() < MAX_BUF_ROWS)
-				lg.reset();
+				// if buffer full, pause other threads by keeping hold of lock
+				wait = res.size() + local_res.size() >= MAX_BUF_ROWS;
+			}
+
+			if (local_res.empty() && stop.stop_requested())
+				break;
+
+			optional<lock_guard<mutex>> lg;
+
+			if (wait)
+				lg.emplace(lock);
 
 			while (!local_res.empty()) {
 				decltype(local_res) res2;
@@ -386,15 +395,6 @@ void bcp_thread::run() noexcept {
 				}
 
 				tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, res2);
-			}
-
-			lg.reset();
-
-			if (!running) {
-				lock_guard<mutex> lg(lock);
-
-				if (res.empty())
-					break;
 			}
 		} while (true);
 	} catch (...) {
@@ -719,10 +719,13 @@ static void do_compare(unsigned int num) {
 			}
 
 			if (!local_res.empty()) {
-				lock_guard<mutex> lg(b.lock);
+				{
+					lock_guard<mutex> lg(b.lock);
 
-				b.res.splice(b.res.end(), local_res);
-				b.ev.set();
+					b.res.splice(b.res.end(), local_res);
+				}
+
+				b.cv.notify_one();
 			}
 
 			if (rows_since_update > 1000) {
@@ -732,19 +735,13 @@ static void do_compare(unsigned int num) {
 			} else
 				rows_since_update++;
 		}
-
-		{
-			lock_guard<mutex> lg(b.lock);
-
-			b.running = false;
-			b.ev.set();
-		}
 	} catch (...) {
 		t1.finished = true;
 		t2.finished = true;
 		throw;
 	}
 
+	b.t.request_stop();
 	b.t.join();
 
 	if (b.exc)

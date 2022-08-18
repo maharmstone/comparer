@@ -120,16 +120,6 @@ private:
 
 #endif
 
-class win_event {
-public:
-	win_event();
-	void wait();
-	void set();
-
-private:
-	unique_handle h;
-};
-
 #ifdef _WIN32
 
 class last_error : public std::exception {
@@ -188,16 +178,18 @@ private:
 
 class bcp_thread {
 public:
-	bcp_thread() : t([this]() noexcept { this->run(); }) {
+	bcp_thread() {
+		t = std::jthread([this](std::stop_token stop) noexcept {
+				this->run(stop);
+		});
 	}
 
 	std::list<std::vector<tds::value>> res;
-	win_event ev;
-	bool running = true;
+	std::condition_variable_any cv;
 	std::mutex lock;
 	std::exception_ptr exc;
 	std::jthread t;
 
 private:
-	void run() noexcept;
+	void run(std::stop_token stop) noexcept;
 };
