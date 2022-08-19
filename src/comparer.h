@@ -40,12 +40,12 @@ public:
 	bool finished;
 	std::u16string query;
 	std::unique_ptr<tds::tds> uptds;
-	std::jthread t;
 	std::exception_ptr ex;
 	std::vector<std::u16string> names;
 	std::list<std::vector<tds::value>> results;
 	std::mutex lock;
 	std::condition_variable cv;
+	std::jthread t;
 };
 
 #ifdef _WIN32
