@@ -4,6 +4,7 @@
 #include <mutex>
 #include <array>
 #include <charconv>
+#include <numeric>
 
 using namespace std;
 
@@ -494,6 +495,13 @@ END
 )", num, num);
 }
 
+static size_t row_byte_count(size_t total, const tds::value& v) {
+	if (!v.is_null)
+		total += v.val.size();
+
+	return total;
+}
+
 static void do_compare(unsigned int num) {
 	tds::tds tds(db_server, db_username, db_password, DB_APP);
 
@@ -580,6 +588,7 @@ static void do_compare(unsigned int num) {
 	};
 
 	unsigned int num_rows1 = 0, num_rows2 = 0, changed_rows = 0, added_rows = 0, removed_rows = 0;
+	size_t bytes1 = 0, bytes2 = 0;
 
 	try {
 		unsigned int rows_since_update = 0, rownum = 0;
@@ -606,6 +615,9 @@ static void do_compare(unsigned int num) {
 				rethrow_exception(b.exc);
 
 			if (!t1_finished && !t2_finished) {
+				bytes1 = accumulate(row1.begin(), row1.end(), bytes1, row_byte_count);
+				bytes2 = accumulate(row2.begin(), row2.end(), bytes2, row_byte_count);
+
 				auto cmp = compare_cols(row1, row2, pk_columns == 0 ? (unsigned int)row1.size() : pk_columns);
 
 				if (cmp == weak_ordering::equivalent) {
@@ -677,6 +689,8 @@ static void do_compare(unsigned int num) {
 					fetch(rows2, t2_finished, t2_done, t2, row2);
 				}
 			} else if (!t1_finished) {
+				bytes1 = accumulate(row1.begin(), row1.end(), bytes1, row_byte_count);
+
 				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row1, pk_columns);
 
 				if (pk_columns == row1.size())
@@ -697,6 +711,8 @@ static void do_compare(unsigned int num) {
 
 				fetch(rows1, t1_finished, t1_done, t1, row1);
 			} else {
+				bytes2 = accumulate(row2.begin(), row2.end(), bytes2, row_byte_count);
+
 				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row2, pk_columns);
 
 				if (pk_columns == row2.size())
@@ -729,7 +745,8 @@ static void do_compare(unsigned int num) {
 			}
 
 			if (rows_since_update > 1000) {
-				tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE() WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
+				tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, bytes1=?, bytes2=?, end_date=SYSDATETIME() WHERE id=?",
+						num_rows1, num_rows2, changed_rows, added_rows, removed_rows, (int64_t)bytes1, (int64_t)bytes2, log_id);
 
 				rows_since_update = 0;
 			} else
@@ -747,7 +764,8 @@ static void do_compare(unsigned int num) {
 	if (b.exc)
 		rethrow_exception(b.exc);
 
-	tds.run("UPDATE Comparer.log SET success=1, rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, end_date=GETDATE(), error=NULL WHERE id=?", num_rows1, num_rows2, changed_rows, added_rows, removed_rows, log_id);
+	tds.run("UPDATE Comparer.log SET success=1, rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, bytes1=?, bytes2=?, end_date=SYSDATETIME(), error=NULL WHERE id=?",
+			num_rows1, num_rows2, changed_rows, added_rows, removed_rows, (int64_t)bytes1, (int64_t)bytes2, log_id);
 }
 
 int main(int argc, char* argv[]) {
