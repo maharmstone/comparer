@@ -36,14 +36,6 @@ void sql_thread::run() noexcept {
 
 		if (b) {
 			do {
-				size_t num_res;
-
-				do {
-					lock_guard<mutex> guard(lock);
-
-					num_res = results.size();
-				} while (num_res > 100000 && !finished);
-
 				if (finished)
 					break;
 
