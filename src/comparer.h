@@ -41,7 +41,7 @@ public:
 	std::u16string query;
 	std::unique_ptr<tds::tds> uptds;
 	std::exception_ptr ex;
-	std::vector<std::u16string> names;
+	std::vector<tds::column> cols;
 	std::list<std::vector<tds::value>> results;
 	std::mutex lock;
 	std::condition_variable cv;

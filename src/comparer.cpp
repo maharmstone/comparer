@@ -24,17 +24,17 @@ void sql_thread::run() noexcept {
 
 		tds::query sq(tds, tds::no_check{query});
 
-		auto b = sq.fetch_row();
-
 		auto num_col = sq.num_columns();
 
+		cols.reserve(num_col);
+
+		for (uint16_t i = 0; i < num_col; i++) {
+			cols.emplace_back(sq[i]);
+		}
+
+		auto b = sq.fetch_row();
+
 		if (b) {
-			names.reserve(num_col);
-
-			for (uint16_t i = 0; i < num_col; i++) {
-				names.emplace_back(sq[i].name);
-			}
-
 			do {
 				size_t num_res;
 
@@ -633,7 +633,7 @@ static void do_compare(unsigned int num) {
 								if (pk.empty())
 									pk = make_pk_string(row1, pk_columns);
 
-								local_res.push_back({num, pk, "modified", i + 1, v1, v2, t1.names[i]});
+								local_res.push_back({num, pk, "modified", i + 1, v1, v2, t1.cols[i].name});
 								changed = true;
 							}
 						}
@@ -657,9 +657,9 @@ static void do_compare(unsigned int num) {
 							const auto& v1 = row1[i];
 
 							if (v1.is_null)
-								local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.names[i]});
+								local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
 							else
-								local_res.push_back({num, pk, "removed", i + 1, (string)v1, nullptr, t1.names[i]});
+								local_res.push_back({num, pk, "removed", i + 1, (string)v1, nullptr, t1.cols[i].name});
 						}
 					}
 
@@ -677,9 +677,9 @@ static void do_compare(unsigned int num) {
 							const auto& v2 = row2[i];
 
 							if (v2.is_null)
-								local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.names[i]});
+								local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
 							else
-								local_res.push_back({num, pk, "added", i + 1, nullptr, (string)v2, t2.names[i]});
+								local_res.push_back({num, pk, "added", i + 1, nullptr, (string)v2, t2.cols[i].name});
 						}
 					}
 
@@ -700,9 +700,9 @@ static void do_compare(unsigned int num) {
 						const auto& v1 = row1[i];
 
 						if (v1.is_null)
-							local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.names[i]});
+							local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
 						else
-							local_res.push_back({num, pk, "removed", i + 1, (string)v1, nullptr, t1.names[i]});
+							local_res.push_back({num, pk, "removed", i + 1, (string)v1, nullptr, t1.cols[i].name});
 					}
 				}
 
@@ -722,9 +722,9 @@ static void do_compare(unsigned int num) {
 						const auto& v2 = row2[i];
 
 						if (v2.is_null)
-							local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.names[i]});
+							local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
 						else
-							local_res.push_back({num, pk, "added", i + 1, nullptr, (string)v2, t2.names[i]});
+							local_res.push_back({num, pk, "added", i + 1, nullptr, (string)v2, t2.cols[i].name});
 					}
 				}
 
