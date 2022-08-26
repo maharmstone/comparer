@@ -8,7 +8,7 @@
 
 using namespace std;
 
-static const string DB_APP = "Janus";
+static constexpr string_view DB_APP = "Janus";
 
 static unsigned int log_id = 0;
 static string db_server, db_username, db_password;
