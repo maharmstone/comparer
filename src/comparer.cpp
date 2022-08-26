@@ -39,6 +39,12 @@ void sql_thread::run() noexcept {
 
 		if (b) {
 			do {
+				{
+					unique_lock ul(lock);
+
+					cv.wait(ul, [&]() { return results.size() <= 100000 || finished; });
+				}
+
 				if (finished)
 					break;
 
@@ -60,11 +66,13 @@ void sql_thread::run() noexcept {
 					}
 				} while (sq.fetch_row_no_wait());
 
-				lock_guard<mutex> guard(lock);
+				{
+					lock_guard<mutex> guard(lock);
 
-				results.splice(results.end(), l);
+					results.splice(results.end(), l);
+				}
 
-				cv.notify_one();
+				cv.notify_all();
 			} while (!finished && sq.fetch_row());
 		}
 	} catch (...) {
@@ -74,7 +82,7 @@ void sql_thread::run() noexcept {
 	finished = true;
 
 	lock_guard<mutex> guard(lock);
-	cv.notify_one();
+	cv.notify_all();
 }
 
 void sql_thread::wait_for(const invocable auto& func) {
@@ -575,8 +583,10 @@ static void do_compare(unsigned int num) {
 			t.wait_for([&]() noexcept {
 				done = t.finished;
 
-				if (!t.results.empty())
+				if (!t.results.empty()) {
 					rows.splice(rows.end(), t.results);
+					t.cv.notify_all();
+				}
 			});
 
 			if (t.finished && t.ex)
