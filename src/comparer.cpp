@@ -10,6 +10,9 @@ using namespace std;
 
 static constexpr string_view DB_APP = "Janus";
 
+// FIXME - calculate this dynamically?
+static constexpr unsigned int MAX_PACKETS = 262144; // 1 GB
+
 static unsigned int log_id = 0;
 static string db_server, db_username, db_password;
 
@@ -549,8 +552,14 @@ static void do_compare(unsigned int num) {
 
 	list<vector<pair<tds::value_data_t, bool>>> rows1, rows2;
 
-	auto tds1 = make_unique<tds::tds>(server1, db_username, db_password, DB_APP);
-	auto tds2 = make_unique<tds::tds>(server2, db_username, db_password, DB_APP);
+	auto opts1 = tds::options(server1, db_username, db_password, DB_APP);
+	auto opts2 = tds::options(server2, db_username, db_password, DB_APP);
+
+	opts1.rate_limit = MAX_PACKETS;
+	opts2.rate_limit = MAX_PACKETS;
+
+	auto tds1 = make_unique<tds::tds>(opts1);
+	auto tds2 = make_unique<tds::tds>(opts2);
 
 	sql_thread t1(q1, tds1);
 	sql_thread t2(q2, tds2);
