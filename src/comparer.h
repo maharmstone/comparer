@@ -42,7 +42,7 @@ public:
 	std::unique_ptr<tds::tds> uptds;
 	std::exception_ptr ex;
 	std::vector<tds::column> cols;
-	std::list<std::vector<tds::value>> results;
+	std::list<std::vector<std::pair<tds::value_data_t, bool>>> results;
 	std::mutex lock;
 	std::condition_variable cv;
 	std::jthread t;

@@ -56,7 +56,12 @@ void sql_thread::run() noexcept {
 					v.reserve(num_col);
 
 					for (uint16_t i = 0; i < num_col; i++) {
-						v.emplace_back(sq[i]);
+						v.emplace_back();
+
+						auto& vb = v.back();
+
+						vb.first.swap(sq[i].val);
+						vb.second = sq[i].is_null;
 					}
 				} while (sq.fetch_row_no_wait());
 
@@ -280,7 +285,7 @@ ORDER BY columns.column_id)"}, index_id, object_id);
 	}
 }
 
-static weak_ordering compare_cols(const vector<tds::value>& row1, const vector<tds::value>& row2, unsigned int columns) {
+static weak_ordering compare_cols(const vector<tds::column>& row1, const vector<tds::column>& row2, unsigned int columns) {
 	for (unsigned int i = 0; i < columns; i++) {
 		if (row1[i].is_null || row2[i].is_null) {
 			if (row1[i].is_null && row2[i].is_null)
@@ -305,7 +310,7 @@ static weak_ordering compare_cols(const vector<tds::value>& row1, const vector<t
 	return weak_ordering::equivalent;
 }
 
-static string make_pk_string(const vector<tds::value>& row, unsigned int pk_columns) {
+static string make_pk_string(const vector<tds::column>& row, unsigned int pk_columns) {
 	string ret;
 
 	for (unsigned int i = 0; i < pk_columns; i++) {
@@ -550,8 +555,7 @@ static void do_compare(unsigned int num) {
 
 	repartition_results_table(tds, num);
 
-	vector<tds::value> row1, row2;
-	list<vector<tds::value>> rows1, rows2;
+	list<vector<pair<tds::value_data_t, bool>>> rows1, rows2;
 
 	auto tds1 = make_unique<tds::tds>(server1, db_username, db_password, DB_APP);
 	auto tds2 = make_unique<tds::tds>(server2, db_username, db_password, DB_APP);
@@ -560,7 +564,7 @@ static void do_compare(unsigned int num) {
 	sql_thread t2(q2, tds2);
 	bcp_thread b;
 
-	auto fetch = [](auto& rows, bool& finished, bool& done, sql_thread& t, auto& row) {
+	auto fetch = [](auto& rows, bool& finished, bool& done, sql_thread& t, auto& cols) {
 		while (rows.empty() && !finished) {
 			finished = done;
 
@@ -583,7 +587,13 @@ static void do_compare(unsigned int num) {
 			}
 		}
 
-		row = move(rows.front());
+		auto& rf = rows.front();
+
+		for (size_t i = 0; i < rf.size(); i++) {
+			cols[i].val.swap(rf[i].first);
+			cols[i].is_null = rf[i].second;
+		}
+
 		rows.pop_front();
 	};
 
@@ -594,8 +604,8 @@ static void do_compare(unsigned int num) {
 		unsigned int rows_since_update = 0, rownum = 0;
 		bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
 
-		fetch(rows1, t1_finished, t1_done, t1, row1);
-		fetch(rows2, t2_finished, t2_done, t2, row2);
+		fetch(rows1, t1_finished, t1_done, t1, t1.cols);
+		fetch(rows2, t2_finished, t2_done, t2, t2.cols);
 
 		{
 			tds::query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) VALUES(GETDATE(), ?, 0, 'Interrupted.'); SELECT SCOPE_IDENTITY()", num);
@@ -615,23 +625,23 @@ static void do_compare(unsigned int num) {
 				rethrow_exception(b.exc);
 
 			if (!t1_finished && !t2_finished) {
-				bytes1 = accumulate(row1.begin(), row1.end(), bytes1, row_byte_count);
-				bytes2 = accumulate(row2.begin(), row2.end(), bytes2, row_byte_count);
+				bytes1 = accumulate(t1.cols.begin(), t1.cols.end(), bytes1, row_byte_count);
+				bytes2 = accumulate(t2.cols.begin(), t2.cols.end(), bytes2, row_byte_count);
 
-				auto cmp = compare_cols(row1, row2, pk_columns == 0 ? (unsigned int)row1.size() : pk_columns);
+				auto cmp = compare_cols(t1.cols, t2.cols, pk_columns == 0 ? (unsigned int)t1.cols.size() : pk_columns);
 
 				if (cmp == weak_ordering::equivalent) {
 					if (pk_columns > 0) {
 						bool changed = false;
 						string pk;
 
-						for (unsigned int i = pk_columns; i < row1.size(); i++) {
-							const auto& v1 = row1[i];
-							const auto& v2 = row2[i];
+						for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+							const auto& v1 = t1.cols[i];
+							const auto& v2 = t2.cols[i];
 
 							if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && !value_cmp(v1, v2))) {
 								if (pk.empty())
-									pk = make_pk_string(row1, pk_columns);
+									pk = make_pk_string(t1.cols, pk_columns);
 
 								local_res.push_back({num, pk, "modified", i + 1, v1, v2, t1.cols[i].name});
 								changed = true;
@@ -645,16 +655,16 @@ static void do_compare(unsigned int num) {
 					num_rows1++;
 					num_rows2++;
 
-					fetch(rows1, t1_finished, t1_done, t1, row1);
-					fetch(rows2, t2_finished, t2_done, t2, row2);
+					fetch(rows1, t1_finished, t1_done, t1, t1.cols);
+					fetch(rows2, t2_finished, t2_done, t2, t2.cols);
 				} else if (cmp == weak_ordering::less) {
-					const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row1, pk_columns);
+					const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
 
-					if (pk_columns == row1.size())
+					if (pk_columns == t1.cols.size())
 						local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
 					else {
-						for (unsigned int i = pk_columns; i < row1.size(); i++) {
-							const auto& v1 = row1[i];
+						for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+							const auto& v1 = t1.cols[i];
 
 							if (v1.is_null)
 								local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
@@ -666,15 +676,15 @@ static void do_compare(unsigned int num) {
 					removed_rows++;
 					num_rows1++;
 
-					fetch(rows1, t1_finished, t1_done, t1, row1);
+					fetch(rows1, t1_finished, t1_done, t1, t1.cols);
 				} else {
-					const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row2, pk_columns);
+					const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
 
-					if (pk_columns == row2.size())
+					if (pk_columns == t2.cols.size())
 						local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
 					else {
-						for (unsigned int i = pk_columns; i < row2.size(); i++) {
-							const auto& v2 = row2[i];
+						for (unsigned int i = pk_columns; i < t2.cols.size(); i++) {
+							const auto& v2 = t2.cols[i];
 
 							if (v2.is_null)
 								local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
@@ -686,18 +696,18 @@ static void do_compare(unsigned int num) {
 					added_rows++;
 					num_rows2++;
 
-					fetch(rows2, t2_finished, t2_done, t2, row2);
+					fetch(rows2, t2_finished, t2_done, t2, t2.cols);
 				}
 			} else if (!t1_finished) {
-				bytes1 = accumulate(row1.begin(), row1.end(), bytes1, row_byte_count);
+				bytes1 = accumulate(t1.cols.begin(), t1.cols.end(), bytes1, row_byte_count);
 
-				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row1, pk_columns);
+				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
 
-				if (pk_columns == row1.size())
+				if (pk_columns == t1.cols.size())
 					local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
 				else {
-					for (unsigned int i = pk_columns; i < row1.size(); i++) {
-						const auto& v1 = row1[i];
+					for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+						const auto& v1 = t1.cols[i];
 
 						if (v1.is_null)
 							local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
@@ -709,17 +719,17 @@ static void do_compare(unsigned int num) {
 				removed_rows++;
 				num_rows1++;
 
-				fetch(rows1, t1_finished, t1_done, t1, row1);
+				fetch(rows1, t1_finished, t1_done, t1, t1.cols);
 			} else {
-				bytes2 = accumulate(row2.begin(), row2.end(), bytes2, row_byte_count);
+				bytes2 = accumulate(t2.cols.begin(), t2.cols.end(), bytes2, row_byte_count);
 
-				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(row2, pk_columns);
+				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
 
-				if (pk_columns == row2.size())
+				if (pk_columns == t2.cols.size())
 					local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
 				else {
-					for (unsigned int i = pk_columns; i < row2.size(); i++) {
-						const auto& v2 = row2[i];
+					for (unsigned int i = pk_columns; i < t2.cols.size(); i++) {
+						const auto& v2 = t2.cols[i];
 
 						if (v2.is_null)
 							local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
@@ -731,7 +741,7 @@ static void do_compare(unsigned int num) {
 				added_rows++;
 				num_rows2++;
 
-				fetch(rows2, t2_finished, t2_done, t2, row2);
+				fetch(rows2, t2_finished, t2_done, t2, t2.cols);
 			}
 
 			if (!local_res.empty()) {
