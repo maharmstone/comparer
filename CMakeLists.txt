@@ -32,7 +32,6 @@ if(NOT MSVC)
     target_compile_options(comparer PUBLIC -Wall -Werror=cast-function-type -Wno-expansion-to-defined -Wunused-parameter -Wtype-limits -Wextra -Wconversion -Wnoexcept)
 
     target_compile_options(comparer PUBLIC -fdata-sections -ffunction-sections)
-    target_compile_options(comparer PUBLIC -g0)
     target_link_options(comparer PUBLIC -Wl,--gc-sections)
 
     #target_compile_options(comparer PUBLIC -gcodeview)
