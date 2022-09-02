@@ -619,7 +619,7 @@ static void do_compare(unsigned int num) {
 		fetch(rows2, t2_finished, t2_done, t2, t2.cols);
 
 		{
-			tds::query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) VALUES(GETDATE(), ?, 0, 'Interrupted.'); SELECT SCOPE_IDENTITY()", num);
+			tds::query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) OUTPUT inserted.id VALUES(GETDATE(), ?, 0, 'Interrupted.')", num);
 
 			if (!sq.fetch_row())
 				throw runtime_error("Error creating log entry.");
