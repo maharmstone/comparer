@@ -16,12 +16,13 @@ static constexpr unsigned int MAX_PACKETS = 262144; // 1 GB
 static unsigned int log_id = 0;
 static string db_server, db_username, db_password;
 
-sql_thread::sql_thread(const u16string_view& query, unique_ptr<tds::tds>& tds) : finished(false), query(query), uptds(move(tds)), t([](sql_thread* st) noexcept {
-		st->run();
-	}, this) {
+sql_thread::sql_thread(const u16string_view& query, unique_ptr<tds::tds>& tds) : finished(false), query(query), uptds(move(tds)) {
+	t = jthread([&](stop_token stop, sql_thread* st) noexcept {
+		st->run(stop);
+	}, this);
 }
 
-void sql_thread::run() noexcept {
+void sql_thread::run(stop_token stop) noexcept {
 	try {
 		auto& tds = *uptds.get();
 
@@ -42,10 +43,10 @@ void sql_thread::run() noexcept {
 				{
 					unique_lock ul(lock);
 
-					cv.wait(ul, [&]() { return results.size() <= 100000 || finished; });
+					cv.wait(ul, [&]() { return results.size() <= 100000 || finished || stop.stop_requested(); });
 				}
 
-				if (finished)
+				if (finished || stop.stop_requested())
 					break;
 
 				decltype(results) l;
@@ -73,7 +74,7 @@ void sql_thread::run() noexcept {
 				}
 
 				cv.notify_all();
-			} while (!finished && sq.fetch_row());
+			} while (!finished && !stop.stop_requested() && sq.fetch_row());
 		}
 	} catch (...) {
 		ex = current_exception();
