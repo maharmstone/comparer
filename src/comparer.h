@@ -33,7 +33,7 @@ private:
 
 class sql_thread {
 public:
-	sql_thread(const std::u16string_view& query, std::unique_ptr<tds::tds>& tds);
+	sql_thread(std::u16string_view query, std::unique_ptr<tds::tds>& tds);
 	void run(std::stop_token) noexcept;
 	void wait_for(const std::invocable auto& func);
 

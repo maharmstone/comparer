@@ -16,7 +16,7 @@ static constexpr unsigned int MAX_PACKETS = 262144; // 1 GB
 static unsigned int log_id = 0;
 static string db_server, db_username, db_password;
 
-sql_thread::sql_thread(const u16string_view& query, unique_ptr<tds::tds>& tds) : finished(false), query(query), uptds(move(tds)) {
+sql_thread::sql_thread(u16string_view query, unique_ptr<tds::tds>& tds) : finished(false), query(query), uptds(move(tds)) {
 	t = jthread([&](stop_token stop, sql_thread* st) noexcept {
 		st->run(stop);
 	}, this);
@@ -121,7 +121,7 @@ static string sanitize_identifier(string_view sv) {
 	return s;
 }
 
-static void create_queries(tds::tds& tds, const u16string_view& tbl1, const u16string_view& tbl2,
+static void create_queries(tds::tds& tds, u16string_view tbl1, u16string_view tbl2,
 						   u16string& q1, u16string& q2, string& server1, string& server2,
 						   unsigned int& pk_columns) {
 	vector<u16string> cols;
