@@ -86,6 +86,11 @@ void sql_thread::run(stop_token stop) noexcept {
 	cv.notify_all();
 }
 
+sql_thread::~sql_thread() {
+	t.request_stop();
+	cv.notify_all();
+}
+
 void sql_thread::wait_for(const invocable auto& func) {
 	unique_lock<mutex> ul(lock);
 
