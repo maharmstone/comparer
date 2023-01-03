@@ -351,6 +351,12 @@ static bool value_cmp(const tds::value& v1, const tds::value& v2) {
 	auto d1 = (double)v1;
 	auto d2 = (double)v2;
 
+	if (d1 > -1.0e-10 && d1 < 1.0e-10)
+		d1 = 0.0;
+
+	if (d2 > -1.0e-10 && d2 < 1.0e-10)
+		d2 = 0.0;
+
 #ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstrict-aliasing"
