@@ -371,7 +371,9 @@ static bool value_cmp(const tds::value& v1, const tds::value& v2) {
 
 	auto diff = i1 - i2;
 
-	return diff < 128 && diff >= -127;
+	// this should be about 10 s.f.
+
+	return diff < 262144 && diff >= -262144;
 }
 
 void bcp_thread::run(stop_token stop) noexcept {
