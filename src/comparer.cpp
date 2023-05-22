@@ -694,7 +694,7 @@ static void do_compare(unsigned int num) {
 							if (v1.is_null)
 								local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
 							else
-								local_res.push_back({num, pk, "removed", i + 1, (string)v1, nullptr, t1.cols[i].name});
+								local_res.push_back({num, pk, "removed", i + 1, v1, nullptr, t1.cols[i].name});
 						}
 					}
 
@@ -714,7 +714,7 @@ static void do_compare(unsigned int num) {
 							if (v2.is_null)
 								local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
 							else
-								local_res.push_back({num, pk, "added", i + 1, nullptr, (string)v2, t2.cols[i].name});
+								local_res.push_back({num, pk, "added", i + 1, nullptr, v2, t2.cols[i].name});
 						}
 					}
 
@@ -737,7 +737,7 @@ static void do_compare(unsigned int num) {
 						if (v1.is_null)
 							local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
 						else
-							local_res.push_back({num, pk, "removed", i + 1, (string)v1, nullptr, t1.cols[i].name});
+							local_res.push_back({num, pk, "removed", i + 1, v1, nullptr, t1.cols[i].name});
 					}
 				}
 
@@ -759,7 +759,7 @@ static void do_compare(unsigned int num) {
 						if (v2.is_null)
 							local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
 						else
-							local_res.push_back({num, pk, "added", i + 1, nullptr, (string)v2, t2.cols[i].name});
+							local_res.push_back({num, pk, "added", i + 1, nullptr, v2, t2.cols[i].name});
 					}
 				}
 
