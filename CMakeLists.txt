@@ -21,11 +21,9 @@ if(WIN32)
 endif()
 
 find_package(tdscpp REQUIRED)
-find_package(fmt REQUIRED)
 find_package(Threads REQUIRED)
 
 target_link_libraries(comparer tdscpp)
-target_link_libraries(comparer fmt::fmt-header-only)
 target_link_libraries(comparer Threads::Threads)
 
 if(NOT MSVC)

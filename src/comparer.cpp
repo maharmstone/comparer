@@ -333,7 +333,7 @@ static string make_pk_string(const vector<tds::column>& row, unsigned int pk_col
 }
 
 static string pseudo_pk(unsigned int& rownum) {
-	auto s = fmt::format("{}", rownum);
+	auto s = format("{}", rownum);
 
 	rownum++;
 
@@ -816,7 +816,7 @@ int main(int argc, char* argv[]) {
 	auto [ptr, ec] = from_chars(sv.data(), sv.data() + sv.length(), num);
 
 	if (ec != errc()) {
-		fmt::print(stderr, "Could not convert \"{}\" to integer.\n", sv);
+		cerr << format("Could not convert \"{}\" to integer.\n", sv);
 		return 1;
 	}
 
