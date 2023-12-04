@@ -126,10 +126,69 @@ static string sanitize_identifier(string_view sv) {
 	return s;
 }
 
+template<typename T>
+requires requires { std::to_string(T{}); }
+static u16string to_u16string(const T& t) {
+	return tds::utf8_to_utf16(std::to_string(t));
+}
+
+static void create_results_table(tds::tds& tds, const vector<pair<u16string, u16string>>& pk,
+								 unsigned int num) {
+	u16string q;
+
+	// FIXME - hide via microsoft_database_tools_support extended property?
+	// FIXME - unique used as primary key
+	// FIXME - name collisions
+
+	q = u"CREATE TABLE Comparer.results" + to_u16string(num) + u" (\n";
+
+	for (const auto& p : pk) {
+		q += tds::escape(p.first) + u" ";
+		q += p.second;
+		q += u" NOT NULL,\n";
+	}
+
+	q += u"change VARCHAR(10) NOT NULL,\n";
+	q += u"col SMALLINT NOT NULL,\n";
+	q += u"col_name VARCHAR(128) NOT NULL,\n";
+	q += u"value1 VARCHAR(MAX) NULL,\n";
+	q += u"value2 VARCHAR(MAX) NULL,\n";
+	// FIXME - PRIMARY KEY
+
+	q += u");";
+
+	{
+		tds::trans trans(tds);
+
+		tds.run(tds::no_check{"DROP TABLE IF EXISTS Comparer.results" + to_string(num)});
+		tds.run(tds::no_check{q});
+
+		trans.commit();
+	}
+}
+
+static u16string type_to_string(u16string_view name, int max_length, int precision, int scale) {
+	u16string ret{tds::escape(name)};
+
+	if (name == u"CHAR" || name == u"VARCHAR" || name == u"BINARY" || name == u"VARBINARY")
+		ret += u"(" + (max_length == -1 ? u"MAX" : to_u16string(max_length)) + u")";
+	else if (name == u"NCHAR" || name == u"NVARCHAR")
+		ret += u"(" + (max_length == -1 ? u"MAX" : to_u16string(max_length / 2)) + u")";
+	else if (name == u"DECIMAL" || name == u"NUMERIC")
+		ret += u"(" + to_u16string(precision) + u"," + to_u16string(scale) + u")";
+	else if ((name == u"TIME" || name == u"DATETIME2" || name == u"DATETIMEOFFSET") && scale != 7)
+		ret += u"(" + to_u16string(scale) + u")";
+
+	// FIXME - collation
+
+	return ret;
+}
+
 static void create_queries(tds::tds& tds, u16string_view tbl1, u16string_view tbl2,
 						   u16string& q1, u16string& q2, string& server1, string& server2,
-						   unsigned int& pk_columns) {
+						   unsigned int& pk_columns, unsigned int num) {
 	vector<u16string> cols;
+	vector<pair<u16string, u16string>> pk;
 	int64_t object_id;
 
 	pk_columns = 0;
@@ -177,10 +236,16 @@ schemas.name = PARSENAME(?, 2))"}, tbl1, tbl1);
 		optional<int32_t> index_id;
 
 		{
-			tds::query sq(t, tds::no_check{uR"(SELECT columns.name, indexes.index_id
+			tds::query sq(t, tds::no_check{uR"(SELECT columns.name,
+	indexes.index_id,
+	CASE WHEN types.is_user_defined = 0 THEN UPPER(types.name) ELSE types.name END,
+	columns.max_length,
+	columns.precision,
+	columns.scale AS scale
 FROM )" + prefix + uR"(sys.index_columns
 JOIN )" + prefix + uR"(sys.indexes ON indexes.object_id = index_columns.object_id AND indexes.index_id = index_columns.index_id
 JOIN )" + prefix + uR"(sys.columns ON columns.object_id = index_columns.object_id AND columns.column_id = index_columns.column_id
+JOIN )" + prefix + uR"(sys.types ON types.user_type_id = columns.user_type_id
 WHERE index_columns.object_id = ? AND indexes.is_primary_key = 1
 ORDER BY index_columns.index_column_id)"}, object_id);
 
@@ -189,6 +254,11 @@ ORDER BY index_columns.index_column_id)"}, object_id);
 					index_id = (int32_t)sq[1];
 
 				cols.emplace_back(tds::escape((u16string)sq[0]));
+
+				auto type = type_to_string((u16string)sq[2], (int)sq[3], (int)sq[4], (int)sq[5]);
+
+				pk.emplace_back((u16string)sq[0], type);
+
 				pk_columns++;
 			}
 		}
@@ -292,6 +362,9 @@ ORDER BY columns.column_id)"}, index_id, object_id);
 		q1 += cols[i];
 		q2 += cols[i];
 	}
+
+	if (!pk.empty() != 0)
+		create_results_table(tds, pk, num);
 }
 
 static weak_ordering compare_cols(const vector<tds::column>& row1, const vector<tds::column>& row2, unsigned int columns) {
@@ -565,7 +638,7 @@ static void do_compare(unsigned int num) {
 
 			sq2.reset();
 
-			create_queries(tds, tbl1, tbl2, q1, q2, server1, server2, pk_columns);
+			create_queries(tds, tbl1, tbl2, q1, q2, server1, server2, pk_columns, num);
 		} else
 			throw formatted_error("Unsupported type {}.", type);
 	}
