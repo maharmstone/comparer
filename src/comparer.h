@@ -176,9 +176,9 @@ private:
 
 class bcp_thread {
 public:
-	bcp_thread() {
+	bcp_thread(std::u16string_view table_name) : table_name(table_name) {
 		t = std::jthread([this](std::stop_token stop) noexcept {
-				this->run(stop);
+			this->run(stop);
 		});
 	}
 
@@ -187,6 +187,7 @@ public:
 	std::mutex lock;
 	std::exception_ptr exc;
 	std::jthread t;
+	std::u16string table_name;
 
 private:
 	void run(std::stop_token stop) noexcept;

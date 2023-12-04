@@ -133,14 +133,16 @@ static u16string to_u16string(const T& t) {
 }
 
 static void create_results_table(tds::tds& tds, const vector<pair<u16string, u16string>>& pk,
-								 unsigned int num) {
+								 unsigned int num, u16string& results_table) {
 	u16string q;
 
 	// FIXME - hide via microsoft_database_tools_support extended property?
 	// FIXME - unique used as primary key
 	// FIXME - name collisions
 
-	q = u"CREATE TABLE Comparer.results" + to_u16string(num) + u" (\n";
+	results_table = u"Comparer.results" + to_u16string(num);
+
+	q = u"CREATE TABLE " + results_table + u" (\n";
 
 	for (const auto& p : pk) {
 		q += tds::escape(p.first) + u" ";
@@ -160,7 +162,7 @@ static void create_results_table(tds::tds& tds, const vector<pair<u16string, u16
 	{
 		tds::trans trans(tds);
 
-		tds.run(tds::no_check{"DROP TABLE IF EXISTS Comparer.results" + to_string(num)});
+		tds.run(tds::no_check{u"DROP TABLE IF EXISTS " + results_table});
 		tds.run(tds::no_check{q});
 
 		trans.commit();
@@ -186,9 +188,8 @@ static u16string type_to_string(u16string_view name, int max_length, int precisi
 
 static void create_queries(tds::tds& tds, u16string_view tbl1, u16string_view tbl2,
 						   u16string& q1, u16string& q2, string& server1, string& server2,
-						   unsigned int& pk_columns, unsigned int num) {
+						   unsigned int& pk_columns, vector<pair<u16string, u16string>>& pk) {
 	vector<u16string> cols;
-	vector<pair<u16string, u16string>> pk;
 	int64_t object_id;
 
 	pk_columns = 0;
@@ -362,9 +363,6 @@ ORDER BY columns.column_id)"}, index_id, object_id);
 		q1 += cols[i];
 		q2 += cols[i];
 	}
-
-	if (!pk.empty() != 0)
-		create_results_table(tds, pk, num);
 }
 
 static weak_ordering compare_cols(const vector<tds::column>& row1, const vector<tds::column>& row2, unsigned int columns) {
@@ -490,7 +488,12 @@ void bcp_thread::run(stop_token stop) noexcept {
 					}
 				}
 
-				tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, res2);
+				if (table_name.empty())
+					tds.bcp(u"Comparer.results", array{ u"query", u"primary_key", u"change", u"col", u"value1", u"value2", u"col_name" }, res2);
+				else {
+					cout << "FIXME" << endl;
+					// FIXME
+				}
 			}
 		} while (true);
 	} catch (...) {
@@ -597,12 +600,182 @@ static size_t row_byte_count(size_t total, const tds::value& v) {
 	return total;
 }
 
+static void do_compare2(tds::tds& tds, auto& fetch, unsigned int num_rows1, unsigned int num_rows2,
+						unsigned int changed_rows, unsigned int added_rows, unsigned int removed_rows,
+						size_t bytes1, size_t bytes2, sql_thread& t1, sql_thread& t2, unsigned int num,
+						bcp_thread& b, unsigned int pk_columns) {
+	list<vector<pair<tds::value_data_t, bool>>> rows1, rows2;
+	unsigned int rows_since_update = 0, rownum = 0;
+	bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
+
+	fetch(rows1, t1_finished, t1_done, t1, t1.cols);
+	fetch(rows2, t2_finished, t2_done, t2, t2.cols);
+
+	{
+		tds::query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) OUTPUT inserted.id VALUES(GETDATE(), ?, 0, 'Interrupted.')", num);
+
+		if (!sq.fetch_row())
+			throw runtime_error("Error creating log entry.");
+
+		log_id = (unsigned int)sq[0];
+	}
+
+	delete_old_results(tds, num);
+
+	while (!t1_finished || !t2_finished) {
+		list<vector<tds::value>> local_res;
+
+		if (b.exc)
+			rethrow_exception(b.exc);
+
+		if (!t1_finished && !t2_finished) {
+			bytes1 = accumulate(t1.cols.begin(), t1.cols.end(), bytes1, row_byte_count);
+			bytes2 = accumulate(t2.cols.begin(), t2.cols.end(), bytes2, row_byte_count);
+
+			auto cmp = compare_cols(t1.cols, t2.cols, pk_columns == 0 ? (unsigned int)t1.cols.size() : pk_columns);
+
+			if (cmp == weak_ordering::equivalent) {
+				if (pk_columns > 0) {
+					bool changed = false;
+					string pk;
+
+					for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+						const auto& v1 = t1.cols[i];
+						const auto& v2 = t2.cols[i];
+
+						if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && !value_cmp(v1, v2))) {
+							if (pk.empty())
+								pk = make_pk_string(t1.cols, pk_columns);
+
+							local_res.push_back({num, pk, "modified", i + 1, v1, v2, t1.cols[i].name});
+							changed = true;
+						}
+					}
+
+					if (changed)
+						changed_rows++;
+				}
+
+				num_rows1++;
+				num_rows2++;
+
+				fetch(rows1, t1_finished, t1_done, t1, t1.cols);
+				fetch(rows2, t2_finished, t2_done, t2, t2.cols);
+			} else if (cmp == weak_ordering::less) {
+				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
+
+				if (pk_columns == t1.cols.size())
+					local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
+				else {
+					for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+						const auto& v1 = t1.cols[i];
+
+						if (v1.is_null)
+							local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
+						else
+							local_res.push_back({num, pk, "removed", i + 1, v1, nullptr, t1.cols[i].name});
+					}
+				}
+
+				removed_rows++;
+				num_rows1++;
+
+				fetch(rows1, t1_finished, t1_done, t1, t1.cols);
+			} else {
+				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
+
+				if (pk_columns == t2.cols.size())
+					local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
+				else {
+					for (unsigned int i = pk_columns; i < t2.cols.size(); i++) {
+						const auto& v2 = t2.cols[i];
+
+						if (v2.is_null)
+							local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
+						else
+							local_res.push_back({num, pk, "added", i + 1, nullptr, v2, t2.cols[i].name});
+					}
+				}
+
+				added_rows++;
+				num_rows2++;
+
+				fetch(rows2, t2_finished, t2_done, t2, t2.cols);
+			}
+		} else if (!t1_finished) {
+			bytes1 = accumulate(t1.cols.begin(), t1.cols.end(), bytes1, row_byte_count);
+
+			const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
+
+			if (pk_columns == t1.cols.size())
+				local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
+			else {
+				for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+					const auto& v1 = t1.cols[i];
+
+					if (v1.is_null)
+						local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
+					else
+						local_res.push_back({num, pk, "removed", i + 1, v1, nullptr, t1.cols[i].name});
+				}
+			}
+
+			removed_rows++;
+			num_rows1++;
+
+			fetch(rows1, t1_finished, t1_done, t1, t1.cols);
+		} else {
+			bytes2 = accumulate(t2.cols.begin(), t2.cols.end(), bytes2, row_byte_count);
+
+			const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
+
+			if (pk_columns == t2.cols.size())
+				local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
+			else {
+				for (unsigned int i = pk_columns; i < t2.cols.size(); i++) {
+					const auto& v2 = t2.cols[i];
+
+					if (v2.is_null)
+						local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
+					else
+						local_res.push_back({num, pk, "added", i + 1, nullptr, v2, t2.cols[i].name});
+				}
+			}
+
+			added_rows++;
+			num_rows2++;
+
+			fetch(rows2, t2_finished, t2_done, t2, t2.cols);
+		}
+
+		if (!local_res.empty()) {
+			{
+				lock_guard<mutex> lg(b.lock);
+
+				b.res.splice(b.res.end(), local_res);
+			}
+
+			b.cv.notify_one();
+		}
+
+		if (rows_since_update > 1000) {
+			tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, bytes1=?, bytes2=?, end_date=SYSDATETIME() WHERE id=?",
+					num_rows1, num_rows2, changed_rows, added_rows, removed_rows, (int64_t)bytes1, (int64_t)bytes2, log_id);
+
+			rows_since_update = 0;
+		} else
+			rows_since_update++;
+	}
+}
+
 static void do_compare(unsigned int num) {
 	tds::tds tds(db_server, db_username, db_password, DB_APP);
 
 	u16string q1, q2;
 	string server1, server2;
 	unsigned int pk_columns;
+	vector<pair<u16string, u16string>> pk;
+	u16string results_table;
 
 	{
 		optional<tds::query> sq2(in_place, tds, tds::no_check{u"SELECT type, query1, query2, table1, table2 FROM Comparer.queries WHERE id = ?"}, num);
@@ -638,14 +811,16 @@ static void do_compare(unsigned int num) {
 
 			sq2.reset();
 
-			create_queries(tds, tbl1, tbl2, q1, q2, server1, server2, pk_columns, num);
+			create_queries(tds, tbl1, tbl2, q1, q2, server1, server2, pk_columns,
+						   pk);
 		} else
 			throw formatted_error("Unsupported type {}.", type);
 	}
 
-	repartition_results_table(tds, num);
+	if (!pk.empty() != 0)
+		create_results_table(tds, pk, num, results_table);
 
-	list<vector<pair<tds::value_data_t, bool>>> rows1, rows2;
+	repartition_results_table(tds, num);
 
 	auto opts1 = tds::options(server1, db_username, db_password, DB_APP);
 	auto opts2 = tds::options(server2, db_username, db_password, DB_APP);
@@ -658,7 +833,7 @@ static void do_compare(unsigned int num) {
 
 	sql_thread t1(q1, tds1);
 	sql_thread t2(q2, tds2);
-	bcp_thread b;
+	bcp_thread b(results_table);
 
 	auto fetch = [](auto& rows, bool& finished, bool& done, sql_thread& t, auto& cols) {
 		while (rows.empty() && !finished) {
@@ -699,166 +874,11 @@ static void do_compare(unsigned int num) {
 	size_t bytes1 = 0, bytes2 = 0;
 
 	try {
-		unsigned int rows_since_update = 0, rownum = 0;
-		bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
-
-		fetch(rows1, t1_finished, t1_done, t1, t1.cols);
-		fetch(rows2, t2_finished, t2_done, t2, t2.cols);
-
-		{
-			tds::query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) OUTPUT inserted.id VALUES(GETDATE(), ?, 0, 'Interrupted.')", num);
-
-			if (!sq.fetch_row())
-				throw runtime_error("Error creating log entry.");
-
-			log_id = (unsigned int)sq[0];
-		}
-
-		delete_old_results(tds, num);
-
-		while (!t1_finished || !t2_finished) {
-			list<vector<tds::value>> local_res;
-
-			if (b.exc)
-				rethrow_exception(b.exc);
-
-			if (!t1_finished && !t2_finished) {
-				bytes1 = accumulate(t1.cols.begin(), t1.cols.end(), bytes1, row_byte_count);
-				bytes2 = accumulate(t2.cols.begin(), t2.cols.end(), bytes2, row_byte_count);
-
-				auto cmp = compare_cols(t1.cols, t2.cols, pk_columns == 0 ? (unsigned int)t1.cols.size() : pk_columns);
-
-				if (cmp == weak_ordering::equivalent) {
-					if (pk_columns > 0) {
-						bool changed = false;
-						string pk;
-
-						for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-							const auto& v1 = t1.cols[i];
-							const auto& v2 = t2.cols[i];
-
-							if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && !value_cmp(v1, v2))) {
-								if (pk.empty())
-									pk = make_pk_string(t1.cols, pk_columns);
-
-								local_res.push_back({num, pk, "modified", i + 1, v1, v2, t1.cols[i].name});
-								changed = true;
-							}
-						}
-
-						if (changed)
-							changed_rows++;
-					}
-
-					num_rows1++;
-					num_rows2++;
-
-					fetch(rows1, t1_finished, t1_done, t1, t1.cols);
-					fetch(rows2, t2_finished, t2_done, t2, t2.cols);
-				} else if (cmp == weak_ordering::less) {
-					const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
-
-					if (pk_columns == t1.cols.size())
-						local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
-					else {
-						for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-							const auto& v1 = t1.cols[i];
-
-							if (v1.is_null)
-								local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
-							else
-								local_res.push_back({num, pk, "removed", i + 1, v1, nullptr, t1.cols[i].name});
-						}
-					}
-
-					removed_rows++;
-					num_rows1++;
-
-					fetch(rows1, t1_finished, t1_done, t1, t1.cols);
-				} else {
-					const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
-
-					if (pk_columns == t2.cols.size())
-						local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
-					else {
-						for (unsigned int i = pk_columns; i < t2.cols.size(); i++) {
-							const auto& v2 = t2.cols[i];
-
-							if (v2.is_null)
-								local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
-							else
-								local_res.push_back({num, pk, "added", i + 1, nullptr, v2, t2.cols[i].name});
-						}
-					}
-
-					added_rows++;
-					num_rows2++;
-
-					fetch(rows2, t2_finished, t2_done, t2, t2.cols);
-				}
-			} else if (!t1_finished) {
-				bytes1 = accumulate(t1.cols.begin(), t1.cols.end(), bytes1, row_byte_count);
-
-				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
-
-				if (pk_columns == t1.cols.size())
-					local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
-				else {
-					for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-						const auto& v1 = t1.cols[i];
-
-						if (v1.is_null)
-							local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
-						else
-							local_res.push_back({num, pk, "removed", i + 1, v1, nullptr, t1.cols[i].name});
-					}
-				}
-
-				removed_rows++;
-				num_rows1++;
-
-				fetch(rows1, t1_finished, t1_done, t1, t1.cols);
-			} else {
-				bytes2 = accumulate(t2.cols.begin(), t2.cols.end(), bytes2, row_byte_count);
-
-				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
-
-				if (pk_columns == t2.cols.size())
-					local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
-				else {
-					for (unsigned int i = pk_columns; i < t2.cols.size(); i++) {
-						const auto& v2 = t2.cols[i];
-
-						if (v2.is_null)
-							local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
-						else
-							local_res.push_back({num, pk, "added", i + 1, nullptr, v2, t2.cols[i].name});
-					}
-				}
-
-				added_rows++;
-				num_rows2++;
-
-				fetch(rows2, t2_finished, t2_done, t2, t2.cols);
-			}
-
-			if (!local_res.empty()) {
-				{
-					lock_guard<mutex> lg(b.lock);
-
-					b.res.splice(b.res.end(), local_res);
-				}
-
-				b.cv.notify_one();
-			}
-
-			if (rows_since_update > 1000) {
-				tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, bytes1=?, bytes2=?, end_date=SYSDATETIME() WHERE id=?",
-						num_rows1, num_rows2, changed_rows, added_rows, removed_rows, (int64_t)bytes1, (int64_t)bytes2, log_id);
-
-				rows_since_update = 0;
-			} else
-				rows_since_update++;
+		if (results_table.empty())
+			do_compare2(tds, fetch, num_rows1, num_rows2, changed_rows, added_rows, removed_rows,
+						bytes1, bytes2, t1, t2, num, b, pk_columns);
+		else {
+			// FIXME
 		}
 	} catch (...) {
 		t1.finished = true;
