@@ -600,111 +600,47 @@ static size_t row_byte_count(size_t total, const tds::value& v) {
 	return total;
 }
 
-static void do_compare2(tds::tds& tds, auto& fetch, unsigned int num_rows1, unsigned int num_rows2,
-						unsigned int changed_rows, unsigned int added_rows, unsigned int removed_rows,
-						size_t bytes1, size_t bytes2, sql_thread& t1, sql_thread& t2, unsigned int num,
-						bcp_thread& b, unsigned int pk_columns) {
-	list<vector<pair<tds::value_data_t, bool>>> rows1, rows2;
-	unsigned int rows_since_update = 0, rownum = 0;
-	bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
+static void do_compare2(auto& fetch, unsigned int& num_rows1, unsigned int& num_rows2,
+						unsigned int& changed_rows, unsigned int& added_rows, unsigned int& removed_rows,
+						size_t& bytes1, size_t& bytes2, sql_thread& t1, sql_thread& t2, unsigned int num,
+						unsigned int pk_columns, bool& t1_finished, bool& t2_finished,
+						list<vector<pair<tds::value_data_t, bool>>>& rows1, list<vector<pair<tds::value_data_t, bool>>>& rows2,
+						bool& t1_done, bool& t2_done, list<vector<tds::value>>& local_res,
+						unsigned int rownum) {
+	if (!t1_finished && !t2_finished) {
+		bytes1 = accumulate(t1.cols.begin(), t1.cols.end(), bytes1, row_byte_count);
+		bytes2 = accumulate(t2.cols.begin(), t2.cols.end(), bytes2, row_byte_count);
 
-	fetch(rows1, t1_finished, t1_done, t1, t1.cols);
-	fetch(rows2, t2_finished, t2_done, t2, t2.cols);
+		auto cmp = compare_cols(t1.cols, t2.cols, pk_columns == 0 ? (unsigned int)t1.cols.size() : pk_columns);
 
-	{
-		tds::query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) OUTPUT inserted.id VALUES(GETDATE(), ?, 0, 'Interrupted.')", num);
+		if (cmp == weak_ordering::equivalent) {
+			if (pk_columns > 0) {
+				bool changed = false;
+				string pk;
 
-		if (!sq.fetch_row())
-			throw runtime_error("Error creating log entry.");
+				for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+					const auto& v1 = t1.cols[i];
+					const auto& v2 = t2.cols[i];
 
-		log_id = (unsigned int)sq[0];
-	}
+					if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && !value_cmp(v1, v2))) {
+						if (pk.empty())
+							pk = make_pk_string(t1.cols, pk_columns);
 
-	delete_old_results(tds, num);
-
-	while (!t1_finished || !t2_finished) {
-		list<vector<tds::value>> local_res;
-
-		if (b.exc)
-			rethrow_exception(b.exc);
-
-		if (!t1_finished && !t2_finished) {
-			bytes1 = accumulate(t1.cols.begin(), t1.cols.end(), bytes1, row_byte_count);
-			bytes2 = accumulate(t2.cols.begin(), t2.cols.end(), bytes2, row_byte_count);
-
-			auto cmp = compare_cols(t1.cols, t2.cols, pk_columns == 0 ? (unsigned int)t1.cols.size() : pk_columns);
-
-			if (cmp == weak_ordering::equivalent) {
-				if (pk_columns > 0) {
-					bool changed = false;
-					string pk;
-
-					for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-						const auto& v1 = t1.cols[i];
-						const auto& v2 = t2.cols[i];
-
-						if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && !value_cmp(v1, v2))) {
-							if (pk.empty())
-								pk = make_pk_string(t1.cols, pk_columns);
-
-							local_res.push_back({num, pk, "modified", i + 1, v1, v2, t1.cols[i].name});
-							changed = true;
-						}
-					}
-
-					if (changed)
-						changed_rows++;
-				}
-
-				num_rows1++;
-				num_rows2++;
-
-				fetch(rows1, t1_finished, t1_done, t1, t1.cols);
-				fetch(rows2, t2_finished, t2_done, t2, t2.cols);
-			} else if (cmp == weak_ordering::less) {
-				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
-
-				if (pk_columns == t1.cols.size())
-					local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
-				else {
-					for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-						const auto& v1 = t1.cols[i];
-
-						if (v1.is_null)
-							local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
-						else
-							local_res.push_back({num, pk, "removed", i + 1, v1, nullptr, t1.cols[i].name});
+						local_res.push_back({num, pk, "modified", i + 1, v1, v2, t1.cols[i].name});
+						changed = true;
 					}
 				}
 
-				removed_rows++;
-				num_rows1++;
-
-				fetch(rows1, t1_finished, t1_done, t1, t1.cols);
-			} else {
-				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
-
-				if (pk_columns == t2.cols.size())
-					local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
-				else {
-					for (unsigned int i = pk_columns; i < t2.cols.size(); i++) {
-						const auto& v2 = t2.cols[i];
-
-						if (v2.is_null)
-							local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
-						else
-							local_res.push_back({num, pk, "added", i + 1, nullptr, v2, t2.cols[i].name});
-					}
-				}
-
-				added_rows++;
-				num_rows2++;
-
-				fetch(rows2, t2_finished, t2_done, t2, t2.cols);
+				if (changed)
+					changed_rows++;
 			}
-		} else if (!t1_finished) {
-			bytes1 = accumulate(t1.cols.begin(), t1.cols.end(), bytes1, row_byte_count);
 
+			num_rows1++;
+			num_rows2++;
+
+			fetch(rows1, t1_finished, t1_done, t1, t1.cols);
+			fetch(rows2, t2_finished, t2_done, t2, t2.cols);
+		} else if (cmp == weak_ordering::less) {
 			const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
 
 			if (pk_columns == t1.cols.size())
@@ -725,8 +661,6 @@ static void do_compare2(tds::tds& tds, auto& fetch, unsigned int num_rows1, unsi
 
 			fetch(rows1, t1_finished, t1_done, t1, t1.cols);
 		} else {
-			bytes2 = accumulate(t2.cols.begin(), t2.cols.end(), bytes2, row_byte_count);
-
 			const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
 
 			if (pk_columns == t2.cols.size())
@@ -747,24 +681,50 @@ static void do_compare2(tds::tds& tds, auto& fetch, unsigned int num_rows1, unsi
 
 			fetch(rows2, t2_finished, t2_done, t2, t2.cols);
 		}
+	} else if (!t1_finished) {
+		bytes1 = accumulate(t1.cols.begin(), t1.cols.end(), bytes1, row_byte_count);
 
-		if (!local_res.empty()) {
-			{
-				lock_guard<mutex> lg(b.lock);
+		const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
 
-				b.res.splice(b.res.end(), local_res);
+		if (pk_columns == t1.cols.size())
+			local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
+		else {
+			for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+				const auto& v1 = t1.cols[i];
+
+				if (v1.is_null)
+					local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
+				else
+					local_res.push_back({num, pk, "removed", i + 1, v1, nullptr, t1.cols[i].name});
 			}
-
-			b.cv.notify_one();
 		}
 
-		if (rows_since_update > 1000) {
-			tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, bytes1=?, bytes2=?, end_date=SYSDATETIME() WHERE id=?",
-					num_rows1, num_rows2, changed_rows, added_rows, removed_rows, (int64_t)bytes1, (int64_t)bytes2, log_id);
+		removed_rows++;
+		num_rows1++;
 
-			rows_since_update = 0;
-		} else
-			rows_since_update++;
+		fetch(rows1, t1_finished, t1_done, t1, t1.cols);
+	} else {
+		bytes2 = accumulate(t2.cols.begin(), t2.cols.end(), bytes2, row_byte_count);
+
+		const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
+
+		if (pk_columns == t2.cols.size())
+			local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
+		else {
+			for (unsigned int i = pk_columns; i < t2.cols.size(); i++) {
+				const auto& v2 = t2.cols[i];
+
+				if (v2.is_null)
+					local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
+				else
+					local_res.push_back({num, pk, "added", i + 1, nullptr, v2, t2.cols[i].name});
+			}
+		}
+
+		added_rows++;
+		num_rows2++;
+
+		fetch(rows2, t2_finished, t2_done, t2, t2.cols);
 	}
 }
 
@@ -817,10 +777,12 @@ static void do_compare(unsigned int num) {
 			throw formatted_error("Unsupported type {}.", type);
 	}
 
-	if (!pk.empty() != 0)
-		create_results_table(tds, pk, num, results_table);
-
 	repartition_results_table(tds, num);
+
+	list<vector<pair<tds::value_data_t, bool>>> rows1, rows2;
+
+	if (!pk.empty())
+		create_results_table(tds, pk, num, results_table);
 
 	auto opts1 = tds::options(server1, db_username, db_password, DB_APP);
 	auto opts2 = tds::options(server2, db_username, db_password, DB_APP);
@@ -874,10 +836,53 @@ static void do_compare(unsigned int num) {
 	size_t bytes1 = 0, bytes2 = 0;
 
 	try {
-		if (results_table.empty())
-			do_compare2(tds, fetch, num_rows1, num_rows2, changed_rows, added_rows, removed_rows,
-						bytes1, bytes2, t1, t2, num, b, pk_columns);
-		else {
+		unsigned int rows_since_update = 0, rownum = 0;
+		bool t1_finished = false, t2_finished = false, t1_done = false, t2_done = false;
+
+		{
+			tds::query sq(tds, "INSERT INTO Comparer.log(date, query, success, error) OUTPUT inserted.id VALUES(GETDATE(), ?, 0, 'Interrupted.')", num);
+
+			if (!sq.fetch_row())
+				throw runtime_error("Error creating log entry.");
+
+			log_id = (unsigned int)sq[0];
+		}
+
+		if (results_table.empty()) {
+			delete_old_results(tds, num);
+
+			fetch(rows1, t1_finished, t1_done, t1, t1.cols);
+			fetch(rows2, t2_finished, t2_done, t2, t2.cols);
+
+			while (!t1_finished || !t2_finished) {
+				list<vector<tds::value>> local_res;
+
+				if (b.exc)
+					rethrow_exception(b.exc);
+
+				do_compare2(fetch, num_rows1, num_rows2, changed_rows, added_rows, removed_rows,
+							bytes1, bytes2, t1, t2, num, pk_columns, t1_finished, t2_finished,
+							rows1, rows2, t1_done, t2_done, local_res, rownum);
+
+				if (!local_res.empty()) {
+					{
+						lock_guard<mutex> lg(b.lock);
+
+						b.res.splice(b.res.end(), local_res);
+					}
+
+					b.cv.notify_one();
+				}
+
+				if (rows_since_update > 1000) {
+					tds.run("UPDATE Comparer.log SET rows1=?, rows2=?, changed_rows=?, added_rows=?, removed_rows=?, bytes1=?, bytes2=?, end_date=SYSDATETIME() WHERE id=?",
+							num_rows1, num_rows2, changed_rows, added_rows, removed_rows, (int64_t)bytes1, (int64_t)bytes2, log_id);
+
+					rows_since_update = 0;
+				} else
+					rows_since_update++;
+			}
+		} else {
 			// FIXME
 		}
 	} catch (...) {
