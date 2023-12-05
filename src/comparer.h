@@ -176,7 +176,13 @@ private:
 
 class bcp_thread {
 public:
-	bcp_thread(std::u16string_view table_name) : table_name(table_name) {
+	bcp_thread(std::u16string_view table_name, const std::vector<std::pair<std::u16string, std::u16string>>& pk) : table_name(table_name) {
+		this->pk.reserve(pk.size());
+
+		for (const auto& p : pk) {
+			this->pk.emplace_back(p.first);
+		}
+
 		t = std::jthread([this](std::stop_token stop) noexcept {
 			this->run(stop);
 		});
@@ -188,6 +194,7 @@ public:
 	std::exception_ptr exc;
 	std::jthread t;
 	std::u16string table_name;
+	std::vector<std::u16string> pk;
 
 private:
 	void run(std::stop_token stop) noexcept;
