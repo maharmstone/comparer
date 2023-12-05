@@ -155,7 +155,15 @@ static void create_results_table(tds::tds& tds, const vector<pair<u16string, u16
 	q += u"col_name VARCHAR(128) NOT NULL,\n";
 	q += u"value1 VARCHAR(MAX) NULL,\n";
 	q += u"value2 VARCHAR(MAX) NULL,\n";
-	// FIXME - PRIMARY KEY
+
+	q += u"PRIMARY KEY (";
+
+	for (const auto& p : pk) {
+		q += tds::escape(p.first);
+		q += u", ";
+	}
+
+	q += u"col)\n";
 
 	q += u");";
 
@@ -731,7 +739,7 @@ static void do_compare2(auto& fetch, unsigned int& num_rows1, unsigned int& num_
 				v.reserve(pk_columns + 5);
 
 				for (unsigned int j = 0; j < pk_columns; j++) {
-					v.emplace_back(t1.cols[j]);
+					v.emplace_back(t2.cols[j]);
 				}
 
 				v.emplace_back("added");
@@ -836,7 +844,7 @@ static void do_compare2(auto& fetch, unsigned int& num_rows1, unsigned int& num_
 			v.reserve(pk_columns + 5);
 
 			for (unsigned int j = 0; j < pk_columns; j++) {
-				v.emplace_back(t1.cols[j]);
+				v.emplace_back(t2.cols[j]);
 			}
 
 			v.emplace_back("added");
