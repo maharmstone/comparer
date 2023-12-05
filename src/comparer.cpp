@@ -136,7 +136,6 @@ static void create_results_table(tds::tds& tds, const vector<pair<u16string, u16
 								 unsigned int num, u16string& results_table) {
 	u16string q;
 
-	// FIXME - hide via microsoft_database_tools_support extended property?
 	// FIXME - unique used as primary key
 	// FIXME - name collisions
 
@@ -172,6 +171,8 @@ static void create_results_table(tds::tds& tds, const vector<pair<u16string, u16
 
 		tds.run(tds::no_check{u"DROP TABLE IF EXISTS " + results_table});
 		tds.run(tds::no_check{q});
+
+		tds.run("EXEC sys.sp_addextendedproperty @name = N'microsoft_database_tools_support', @value = NULL, @level0type = 'SCHEMA', @level0name = 'Comparer', @level1type = 'TABLE', @level1name = ?", u"results" + to_u16string(num));
 
 		trans.commit();
 	}
