@@ -621,275 +621,6 @@ static size_t row_byte_count(size_t total, const tds::value& v) {
 	return total;
 }
 
-template<bool do_new>
-static void do_compare2(auto& fetch, unsigned int& num_rows1, unsigned int& num_rows2,
-						unsigned int& changed_rows, unsigned int& added_rows, unsigned int& removed_rows,
-						size_t& bytes1, size_t& bytes2, sql_thread& t1, sql_thread& t2, unsigned int num,
-						unsigned int pk_columns, bool& t1_finished, bool& t2_finished,
-						list<vector<pair<tds::value_data_t, bool>>>& rows1, list<vector<pair<tds::value_data_t, bool>>>& rows2,
-						bool& t1_done, bool& t2_done, list<vector<tds::value>>& local_res,
-						unsigned int rownum) {
-	if (!t1_finished && !t2_finished) {
-		bytes1 = accumulate(t1.cols.begin(), t1.cols.end(), bytes1, row_byte_count);
-		bytes2 = accumulate(t2.cols.begin(), t2.cols.end(), bytes2, row_byte_count);
-
-		auto cmp = compare_cols(t1.cols, t2.cols, pk_columns == 0 ? (unsigned int)t1.cols.size() : pk_columns);
-
-		if (cmp == weak_ordering::equivalent) {
-			if (pk_columns > 0) {
-				bool changed = false;
-				string pk;
-
-				for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-					const auto& v1 = t1.cols[i];
-					const auto& v2 = t2.cols[i];
-
-					if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && !value_cmp(v1, v2))) {
-
-						if constexpr (do_new) {
-							vector<tds::value> v;
-
-							v.reserve(pk_columns + 5);
-
-							for (unsigned int j = 0; j < pk_columns; j++) {
-								v.emplace_back(t1.cols[j]);
-							}
-
-							v.emplace_back("modified");
-							v.emplace_back(i + 1);
-							v.emplace_back(v1);
-							v.emplace_back(v2);
-							v.emplace_back(t1.cols[i].name);
-
-							local_res.push_back(v);
-						} else {
-							if (pk.empty())
-								pk = make_pk_string(t1.cols, pk_columns);
-
-							local_res.push_back({num, pk, "modified", i + 1, v1, v2, t1.cols[i].name});
-						}
-
-						changed = true;
-					}
-				}
-
-				if (changed)
-					changed_rows++;
-			}
-
-			num_rows1++;
-			num_rows2++;
-
-			fetch(rows1, t1_finished, t1_done, t1, t1.cols);
-			fetch(rows2, t2_finished, t2_done, t2, t2.cols);
-		} else if (cmp == weak_ordering::less) {
-			if constexpr (do_new) {
-				vector<tds::value> v;
-
-				v.reserve(pk_columns + 5);
-
-				for (unsigned int j = 0; j < pk_columns; j++) {
-					v.emplace_back(t1.cols[j]);
-				}
-
-				v.emplace_back("removed");
-
-				for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-					const auto& v1 = t1.cols[i];
-
-					v.emplace_back(i + 1);
-
-					if (v1.is_null)
-						v.emplace_back(nullptr);
-					else
-						v.emplace_back(v1);
-
-					v.emplace_back(nullptr);
-					v.emplace_back(t1.cols[i].name);
-
-					local_res.push_back(v);
-
-					v.resize(pk_columns + 1);
-				}
-			} else {
-				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
-
-				if (pk_columns == t1.cols.size())
-					local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
-				else {
-					for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-						const auto& v1 = t1.cols[i];
-
-						if (v1.is_null)
-							local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
-						else
-							local_res.push_back({num, pk, "removed", i + 1, v1, nullptr, t1.cols[i].name});
-					}
-				}
-			}
-
-			removed_rows++;
-			num_rows1++;
-
-			fetch(rows1, t1_finished, t1_done, t1, t1.cols);
-		} else {
-			if constexpr (do_new) {
-				vector<tds::value> v;
-
-				v.reserve(pk_columns + 5);
-
-				for (unsigned int j = 0; j < pk_columns; j++) {
-					v.emplace_back(t2.cols[j]);
-				}
-
-				v.emplace_back("added");
-
-				for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-					const auto& v2 = t2.cols[i];
-
-					v.emplace_back(i + 1);
-					v.emplace_back(nullptr);
-
-					if (v2.is_null)
-						v.emplace_back(nullptr);
-					else
-						v.emplace_back(v2);
-
-					v.emplace_back(t2.cols[i].name);
-
-					local_res.push_back(v);
-
-					v.resize(pk_columns + 1);
-				}
-			} else {
-				const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
-
-				if (pk_columns == t2.cols.size())
-					local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
-				else {
-					for (unsigned int i = pk_columns; i < t2.cols.size(); i++) {
-						const auto& v2 = t2.cols[i];
-
-						if (v2.is_null)
-							local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
-						else
-							local_res.push_back({num, pk, "added", i + 1, nullptr, v2, t2.cols[i].name});
-					}
-				}
-			}
-
-			added_rows++;
-			num_rows2++;
-
-			fetch(rows2, t2_finished, t2_done, t2, t2.cols);
-		}
-	} else if (!t1_finished) {
-		bytes1 = accumulate(t1.cols.begin(), t1.cols.end(), bytes1, row_byte_count);
-
-		if constexpr (do_new) {
-			vector<tds::value> v;
-
-			v.reserve(pk_columns + 5);
-
-			for (unsigned int j = 0; j < pk_columns; j++) {
-				v.emplace_back(t1.cols[j]);
-			}
-
-			v.emplace_back("removed");
-
-			for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-				const auto& v1 = t1.cols[i];
-
-				v.emplace_back(i + 1);
-
-				if (v1.is_null)
-					v.emplace_back(nullptr);
-				else
-					v.emplace_back(v1);
-
-				v.emplace_back(nullptr);
-				v.emplace_back(t1.cols[i].name);
-
-				local_res.push_back(v);
-
-				v.resize(pk_columns + 1);
-			}
-		} else {
-			const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
-
-			if (pk_columns == t1.cols.size())
-				local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
-			else {
-				for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-					const auto& v1 = t1.cols[i];
-
-					if (v1.is_null)
-						local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
-					else
-						local_res.push_back({num, pk, "removed", i + 1, v1, nullptr, t1.cols[i].name});
-				}
-			}
-		}
-
-		removed_rows++;
-		num_rows1++;
-
-		fetch(rows1, t1_finished, t1_done, t1, t1.cols);
-	} else {
-		bytes2 = accumulate(t2.cols.begin(), t2.cols.end(), bytes2, row_byte_count);
-
-		if constexpr (do_new) {
-			vector<tds::value> v;
-
-			v.reserve(pk_columns + 5);
-
-			for (unsigned int j = 0; j < pk_columns; j++) {
-				v.emplace_back(t2.cols[j]);
-			}
-
-			v.emplace_back("added");
-
-			for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-				const auto& v2 = t2.cols[i];
-
-				v.emplace_back(i + 1);
-				v.emplace_back(nullptr);
-
-				if (v2.is_null)
-					v.emplace_back(nullptr);
-				else
-					v.emplace_back(v2);
-
-				v.emplace_back(t2.cols[i].name);
-
-				local_res.push_back(v);
-
-				v.resize(pk_columns + 1);
-			}
-		} else {
-			const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
-
-			if (pk_columns == t2.cols.size())
-				local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
-			else {
-				for (unsigned int i = pk_columns; i < t2.cols.size(); i++) {
-					const auto& v2 = t2.cols[i];
-
-					if (v2.is_null)
-						local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
-					else
-						local_res.push_back({num, pk, "added", i + 1, nullptr, v2, t2.cols[i].name});
-				}
-			}
-		}
-
-		added_rows++;
-		num_rows2++;
-
-		fetch(rows2, t2_finished, t2_done, t2, t2.cols);
-	}
-}
-
 static void do_compare(unsigned int num) {
 	tds::tds tds(db_server, db_username, db_password, DB_APP);
 
@@ -1023,9 +754,265 @@ static void do_compare(unsigned int num) {
 				if (b.exc)
 					rethrow_exception(b.exc);
 
-				do_compare2<do_new>(fetch, num_rows1, num_rows2, changed_rows, added_rows, removed_rows,
-									bytes1, bytes2, t1, t2, num, pk_columns, t1_finished, t2_finished,
-									rows1, rows2, t1_done, t2_done, local_res, rownum);
+				if (!t1_finished && !t2_finished) {
+					bytes1 = accumulate(t1.cols.begin(), t1.cols.end(), bytes1, row_byte_count);
+					bytes2 = accumulate(t2.cols.begin(), t2.cols.end(), bytes2, row_byte_count);
+
+					auto cmp = compare_cols(t1.cols, t2.cols, pk_columns == 0 ? (unsigned int)t1.cols.size() : pk_columns);
+
+					if (cmp == weak_ordering::equivalent) {
+						if (pk_columns > 0) {
+							bool changed = false;
+							string pk;
+
+							for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+								const auto& v1 = t1.cols[i];
+								const auto& v2 = t2.cols[i];
+
+								if ((!v1.is_null && v2.is_null) || (!v2.is_null && v1.is_null) || (!v1.is_null && !v2.is_null && !value_cmp(v1, v2))) {
+
+									if constexpr (do_new) {
+										vector<tds::value> v;
+
+										v.reserve(pk_columns + 5);
+
+										for (unsigned int j = 0; j < pk_columns; j++) {
+											v.emplace_back(t1.cols[j]);
+										}
+
+										v.emplace_back("modified");
+										v.emplace_back(i + 1);
+										v.emplace_back(v1);
+										v.emplace_back(v2);
+										v.emplace_back(t1.cols[i].name);
+
+										local_res.push_back(v);
+									} else {
+										if (pk.empty())
+											pk = make_pk_string(t1.cols, pk_columns);
+
+										local_res.push_back({num, pk, "modified", i + 1, v1, v2, t1.cols[i].name});
+									}
+
+									changed = true;
+								}
+							}
+
+							if (changed)
+								changed_rows++;
+						}
+
+						num_rows1++;
+						num_rows2++;
+
+						fetch(rows1, t1_finished, t1_done, t1, t1.cols);
+						fetch(rows2, t2_finished, t2_done, t2, t2.cols);
+					} else if (cmp == weak_ordering::less) {
+						if constexpr (do_new) {
+							vector<tds::value> v;
+
+							v.reserve(pk_columns + 5);
+
+							for (unsigned int j = 0; j < pk_columns; j++) {
+								v.emplace_back(t1.cols[j]);
+							}
+
+							v.emplace_back("removed");
+
+							for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+								const auto& v1 = t1.cols[i];
+
+								v.emplace_back(i + 1);
+
+								if (v1.is_null)
+									v.emplace_back(nullptr);
+								else
+									v.emplace_back(v1);
+
+								v.emplace_back(nullptr);
+								v.emplace_back(t1.cols[i].name);
+
+								local_res.push_back(v);
+
+								v.resize(pk_columns + 1);
+							}
+						} else {
+							const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
+
+							if (pk_columns == t1.cols.size())
+								local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
+							else {
+								for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+									const auto& v1 = t1.cols[i];
+
+									if (v1.is_null)
+										local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
+									else
+										local_res.push_back({num, pk, "removed", i + 1, v1, nullptr, t1.cols[i].name});
+								}
+							}
+						}
+
+						removed_rows++;
+						num_rows1++;
+
+						fetch(rows1, t1_finished, t1_done, t1, t1.cols);
+					} else {
+						if constexpr (do_new) {
+							vector<tds::value> v;
+
+							v.reserve(pk_columns + 5);
+
+							for (unsigned int j = 0; j < pk_columns; j++) {
+								v.emplace_back(t2.cols[j]);
+							}
+
+							v.emplace_back("added");
+
+							for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+								const auto& v2 = t2.cols[i];
+
+								v.emplace_back(i + 1);
+								v.emplace_back(nullptr);
+
+								if (v2.is_null)
+									v.emplace_back(nullptr);
+								else
+									v.emplace_back(v2);
+
+								v.emplace_back(t2.cols[i].name);
+
+								local_res.push_back(v);
+
+								v.resize(pk_columns + 1);
+							}
+						} else {
+							const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
+
+							if (pk_columns == t2.cols.size())
+								local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
+							else {
+								for (unsigned int i = pk_columns; i < t2.cols.size(); i++) {
+									const auto& v2 = t2.cols[i];
+
+									if (v2.is_null)
+										local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
+									else
+										local_res.push_back({num, pk, "added", i + 1, nullptr, v2, t2.cols[i].name});
+								}
+							}
+						}
+
+						added_rows++;
+						num_rows2++;
+
+						fetch(rows2, t2_finished, t2_done, t2, t2.cols);
+					}
+				} else if (!t1_finished) {
+					bytes1 = accumulate(t1.cols.begin(), t1.cols.end(), bytes1, row_byte_count);
+
+					if constexpr (do_new) {
+						vector<tds::value> v;
+
+						v.reserve(pk_columns + 5);
+
+						for (unsigned int j = 0; j < pk_columns; j++) {
+							v.emplace_back(t1.cols[j]);
+						}
+
+						v.emplace_back("removed");
+
+						for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+							const auto& v1 = t1.cols[i];
+
+							v.emplace_back(i + 1);
+
+							if (v1.is_null)
+								v.emplace_back(nullptr);
+							else
+								v.emplace_back(v1);
+
+							v.emplace_back(nullptr);
+							v.emplace_back(t1.cols[i].name);
+
+							local_res.push_back(v);
+
+							v.resize(pk_columns + 1);
+						}
+					} else {
+						const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
+
+						if (pk_columns == t1.cols.size())
+							local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
+						else {
+							for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+								const auto& v1 = t1.cols[i];
+
+								if (v1.is_null)
+									local_res.push_back({num, pk, "removed", i + 1, nullptr, nullptr, t1.cols[i].name});
+								else
+									local_res.push_back({num, pk, "removed", i + 1, v1, nullptr, t1.cols[i].name});
+							}
+						}
+					}
+
+					removed_rows++;
+					num_rows1++;
+
+					fetch(rows1, t1_finished, t1_done, t1, t1.cols);
+				} else {
+					bytes2 = accumulate(t2.cols.begin(), t2.cols.end(), bytes2, row_byte_count);
+
+					if constexpr (do_new) {
+						vector<tds::value> v;
+
+						v.reserve(pk_columns + 5);
+
+						for (unsigned int j = 0; j < pk_columns; j++) {
+							v.emplace_back(t2.cols[j]);
+						}
+
+						v.emplace_back("added");
+
+						for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+							const auto& v2 = t2.cols[i];
+
+							v.emplace_back(i + 1);
+							v.emplace_back(nullptr);
+
+							if (v2.is_null)
+								v.emplace_back(nullptr);
+							else
+								v.emplace_back(v2);
+
+							v.emplace_back(t2.cols[i].name);
+
+							local_res.push_back(v);
+
+							v.resize(pk_columns + 1);
+						}
+					} else {
+						const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
+
+						if (pk_columns == t2.cols.size())
+							local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
+						else {
+							for (unsigned int i = pk_columns; i < t2.cols.size(); i++) {
+								const auto& v2 = t2.cols[i];
+
+								if (v2.is_null)
+									local_res.push_back({num, pk, "added", i + 1, nullptr, nullptr, t2.cols[i].name});
+								else
+									local_res.push_back({num, pk, "added", i + 1, nullptr, v2, t2.cols[i].name});
+							}
+						}
+					}
+
+					added_rows++;
+					num_rows2++;
+
+					fetch(rows2, t2_finished, t2_done, t2, t2.cols);
+				}
 
 				if (!local_res.empty()) {
 					{
