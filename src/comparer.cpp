@@ -132,7 +132,7 @@ static u16string to_u16string(const T& t) {
 	return tds::utf8_to_utf16(std::to_string(t));
 }
 
-static void create_results_table(tds::tds& tds, const vector<pair<u16string, u16string>>& pk,
+static void create_results_table(tds::tds& tds, const vector<pk_col>& pk,
 								 unsigned int num, u16string& results_table) {
 	u16string q;
 
@@ -144,8 +144,8 @@ static void create_results_table(tds::tds& tds, const vector<pair<u16string, u16
 	q = u"CREATE TABLE " + results_table + u" (\n";
 
 	for (const auto& p : pk) {
-		q += tds::escape(p.first) + u" ";
-		q += p.second;
+		q += tds::escape(p.name) + u" ";
+		q += p.type;
 		q += u" NOT NULL,\n";
 	}
 
@@ -158,7 +158,7 @@ static void create_results_table(tds::tds& tds, const vector<pair<u16string, u16
 	q += u"PRIMARY KEY (";
 
 	for (const auto& p : pk) {
-		q += tds::escape(p.first);
+		q += tds::escape(p.name);
 		q += u", ";
 	}
 
@@ -197,7 +197,7 @@ static u16string type_to_string(u16string_view name, int max_length, int precisi
 
 static void create_queries(tds::tds& tds, u16string_view tbl1, u16string_view tbl2,
 						   u16string& q1, u16string& q2, string& server1, string& server2,
-						   unsigned int& pk_columns, vector<pair<u16string, u16string>>& pk) {
+						   unsigned int& pk_columns, vector<pk_col>& pk) {
 	vector<u16string> cols;
 	int64_t object_id;
 
@@ -628,7 +628,7 @@ static void do_compare(unsigned int num) {
 	u16string q1, q2;
 	string server1, server2;
 	unsigned int pk_columns;
-	vector<pair<u16string, u16string>> pk;
+	vector<pk_col> pk;
 	u16string results_table;
 
 	{

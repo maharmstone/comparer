@@ -174,13 +174,18 @@ private:
 
 #endif
 
+struct pk_col {
+	std::u16string name;
+	std::u16string type;
+};
+
 class bcp_thread {
 public:
-	bcp_thread(std::u16string_view table_name, const std::vector<std::pair<std::u16string, std::u16string>>& pk) : table_name(table_name) {
+	bcp_thread(std::u16string_view table_name, const std::vector<pk_col>& pk) : table_name(table_name) {
 		this->pk.reserve(pk.size());
 
 		for (const auto& p : pk) {
-			this->pk.emplace_back(p.first);
+			this->pk.emplace_back(p.name);
 		}
 
 		t = std::jthread([this](std::stop_token stop) noexcept {
