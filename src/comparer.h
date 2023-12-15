@@ -177,6 +177,7 @@ private:
 struct pk_col {
 	std::u16string name;
 	std::u16string type;
+	bool desc;
 };
 
 class bcp_thread {

@@ -159,6 +159,10 @@ static void create_results_table(tds::tds& tds, const vector<pk_col>& pk,
 
 	for (const auto& p : pk) {
 		q += tds::escape(p.name);
+
+		if (p.desc)
+			q += u" DESC";
+
 		q += u", ";
 	}
 
@@ -251,7 +255,8 @@ schemas.name = PARSENAME(?, 2))"}, tbl1, tbl1);
 	CASE WHEN types.is_user_defined = 0 THEN UPPER(types.name) ELSE types.name END,
 	columns.max_length,
 	columns.precision,
-	columns.scale AS scale
+	columns.scale,
+	index_columns.is_descending_key
 FROM )" + prefix + uR"(sys.index_columns
 JOIN )" + prefix + uR"(sys.indexes ON indexes.object_id = index_columns.object_id AND indexes.index_id = index_columns.index_id
 JOIN )" + prefix + uR"(sys.columns ON columns.object_id = index_columns.object_id AND columns.column_id = index_columns.column_id
@@ -267,7 +272,7 @@ ORDER BY index_columns.index_column_id)"}, object_id);
 
 				auto type = type_to_string((u16string)sq[2], (int)sq[3], (int)sq[4], (int)sq[5]);
 
-				pk.emplace_back((u16string)sq[0], type);
+				pk.emplace_back((u16string)sq[0], type, (unsigned int)sq[6] != 0);
 
 				pk_columns++;
 			}
@@ -312,8 +317,6 @@ ORDER BY columns.column_id)"}, index_id, object_id);
 			}
 		}
 	}
-
-	// FIXME - PKs with DESC element?
 
 	if (cols.empty())
 		throw formatted_error("No columns returned for {}.", tds::utf16_to_utf8(tbl1));
