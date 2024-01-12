@@ -151,7 +151,7 @@ static void create_results_table(tds::tds& tds, const vector<pk_col>& pk,
 
 	q += u"change VARCHAR(10) NOT NULL,\n";
 	q += u"col SMALLINT NOT NULL,\n";
-	q += u"col_name VARCHAR(128) NOT NULL,\n";
+	q += u"col_name VARCHAR(128) NULL,\n";
 	q += u"value1 VARCHAR(MAX) NULL,\n";
 	q += u"value2 VARCHAR(MAX) NULL,\n";
 
