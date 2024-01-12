@@ -133,7 +133,8 @@ static u16string to_u16string(const T& t) {
 }
 
 static void create_results_table(tds::tds& tds, const vector<pk_col>& pk,
-								 unsigned int num, u16string& results_table) {
+								 unsigned int num, u16string& results_table,
+								 bool pk_only) {
 	u16string q;
 
 	// FIXME - unique used as primary key
@@ -150,23 +151,34 @@ static void create_results_table(tds::tds& tds, const vector<pk_col>& pk,
 	}
 
 	q += u"change VARCHAR(10) NOT NULL,\n";
-	q += u"col SMALLINT NOT NULL,\n";
-	q += u"col_name VARCHAR(128) NULL,\n";
-	q += u"value1 VARCHAR(MAX) NULL,\n";
-	q += u"value2 VARCHAR(MAX) NULL,\n";
+
+	if (!pk_only) {
+		q += u"col SMALLINT NOT NULL,\n";
+		q += u"col_name VARCHAR(128) NULL,\n";
+		q += u"value1 VARCHAR(MAX) NULL,\n";
+		q += u"value2 VARCHAR(MAX) NULL,\n";
+	}
 
 	q += u"PRIMARY KEY (";
 
+	bool first = true;
+
 	for (const auto& p : pk) {
+		if (!first)
+			q += u", ";
+
 		q += tds::escape(p.name);
 
 		if (p.desc)
 			q += u" DESC";
 
-		q += u", ";
+		first = false;
 	}
 
-	q += u"col)\n";
+	if (pk_only)
+		q += u")\n";
+	else
+		q += u", col)\n";
 
 	q += u");";
 
@@ -201,10 +213,12 @@ static u16string type_to_string(u16string_view name, int max_length, int precisi
 
 static void create_queries(tds::tds& tds, u16string_view tbl1, u16string_view tbl2,
 						   u16string& q1, u16string& q2, string& server1, string& server2,
-						   unsigned int& pk_columns, vector<pk_col>& pk) {
+						   unsigned int& pk_columns, vector<pk_col>& pk,
+						   bool& pk_only) {
 	vector<u16string> cols;
 	int64_t object_id;
 
+	pk_only = false;
 	pk_columns = 0;
 
 	auto onp = tds::parse_object_name(tbl1);
@@ -317,6 +331,8 @@ ORDER BY columns.column_id)"}, index_id, object_id);
 			}
 		}
 	}
+
+	pk_only = pk_columns == cols.size();
 
 	if (cols.empty())
 		throw formatted_error("No columns returned for {}.", tds::utf16_to_utf8(tbl1));
@@ -478,10 +494,13 @@ void bcp_thread::run(stop_token stop) noexcept {
 				}
 
 				columns.emplace_back(u"change");
-				columns.emplace_back(u"col");
-				columns.emplace_back(u"value1");
-				columns.emplace_back(u"value2");
-				columns.emplace_back(u"col_name");
+
+				if (table_name.empty() || !pk_only) {
+					columns.emplace_back(u"col");
+					columns.emplace_back(u"value1");
+					columns.emplace_back(u"value2");
+					columns.emplace_back(u"col_name");
+				}
 			}
 
 			{
@@ -633,6 +652,7 @@ static void do_compare(unsigned int num) {
 	unsigned int pk_columns;
 	vector<pk_col> pk;
 	u16string results_table;
+	bool pk_only = false;
 
 	{
 		optional<tds::query> sq2(in_place, tds, tds::no_check{u"SELECT type, query1, query2, table1, table2 FROM Comparer.queries WHERE id = ?"}, num);
@@ -669,7 +689,7 @@ static void do_compare(unsigned int num) {
 			sq2.reset();
 
 			create_queries(tds, tbl1, tbl2, q1, q2, server1, server2, pk_columns,
-						   pk);
+						   pk, pk_only);
 		} else
 			throw formatted_error("Unsupported type {}.", type);
 	}
@@ -679,7 +699,7 @@ static void do_compare(unsigned int num) {
 	list<vector<pair<tds::value_data_t, bool>>> rows1, rows2;
 
 	if (!pk.empty())
-		create_results_table(tds, pk, num, results_table);
+		create_results_table(tds, pk, num, results_table, pk_only);
 
 	auto opts1 = tds::options(server1, db_username, db_password, DB_APP);
 	auto opts2 = tds::options(server2, db_username, db_password, DB_APP);
@@ -692,7 +712,7 @@ static void do_compare(unsigned int num) {
 
 	sql_thread t1(q1, tds1);
 	sql_thread t2(q2, tds2);
-	bcp_thread b(results_table, pk);
+	bcp_thread b(results_table, pk, pk_only);
 
 	auto fetch = [](auto& rows, bool& finished, bool& done, sql_thread& t, auto& cols) {
 		while (rows.empty() && !finished) {
@@ -823,14 +843,9 @@ static void do_compare(unsigned int num) {
 
 							v.emplace_back("removed");
 
-							if (pk_columns == t1.cols.size()) {
-								v.emplace_back(0);
-								v.emplace_back(nullptr);
-								v.emplace_back(nullptr);
-								v.emplace_back(nullptr);
-
+							if (pk_only)
 								local_res.push_back(v);
-							} else {
+							else {
 								for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
 									const auto& v1 = t1.cols[i];
 
@@ -852,7 +867,7 @@ static void do_compare(unsigned int num) {
 						} else {
 							const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
 
-							if (pk_columns == t1.cols.size())
+							if (pk_only)
 								local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
 							else {
 								for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
@@ -882,14 +897,9 @@ static void do_compare(unsigned int num) {
 
 							v.emplace_back("added");
 
-							if (pk_columns == t2.cols.size()) {
-								v.emplace_back(0);
-								v.emplace_back(nullptr);
-								v.emplace_back(nullptr);
-								v.emplace_back(nullptr);
-
+							if (pk_only)
 								local_res.push_back(v);
-							} else {
+							else {
 								for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
 									const auto& v2 = t2.cols[i];
 
@@ -911,7 +921,7 @@ static void do_compare(unsigned int num) {
 						} else {
 							const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
 
-							if (pk_columns == t2.cols.size())
+							if (pk_only)
 								local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
 							else {
 								for (unsigned int i = pk_columns; i < t2.cols.size(); i++) {
@@ -944,14 +954,9 @@ static void do_compare(unsigned int num) {
 
 						v.emplace_back("removed");
 
-						if (pk_columns == t1.cols.size()) {
-							v.emplace_back(0);
-							v.emplace_back(nullptr);
-							v.emplace_back(nullptr);
-							v.emplace_back(nullptr);
-
+						if (pk_only)
 							local_res.push_back(v);
-						} else {
+						else {
 							for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
 								const auto& v1 = t1.cols[i];
 
@@ -973,7 +978,7 @@ static void do_compare(unsigned int num) {
 					} else {
 						const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
 
-						if (pk_columns == t1.cols.size())
+						if (pk_only)
 							local_res.push_back({num, pk, "removed", 0, nullptr, nullptr, nullptr});
 						else {
 							for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
@@ -1005,14 +1010,9 @@ static void do_compare(unsigned int num) {
 
 						v.emplace_back("added");
 
-						if (pk_columns == t2.cols.size()) {
-							v.emplace_back(0);
-							v.emplace_back(nullptr);
-							v.emplace_back(nullptr);
-							v.emplace_back(nullptr);
-
+						if (pk_only)
 							local_res.push_back(v);
-						} else {
+						else {
 							for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
 								const auto& v2 = t2.cols[i];
 
@@ -1034,7 +1034,7 @@ static void do_compare(unsigned int num) {
 					} else {
 						const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
 
-						if (pk_columns == t2.cols.size())
+						if (pk_only)
 							local_res.push_back({num, pk, "added", 0, nullptr, nullptr, nullptr});
 						else {
 							for (unsigned int i = pk_columns; i < t2.cols.size(); i++) {
