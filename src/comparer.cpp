@@ -823,22 +823,31 @@ static void do_compare(unsigned int num) {
 
 							v.emplace_back("removed");
 
-							for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-								const auto& v1 = t1.cols[i];
-
-								v.emplace_back(i + 1);
-
-								if (v1.is_null)
-									v.emplace_back(nullptr);
-								else
-									v.emplace_back(v1);
-
+							if (pk_columns == t1.cols.size()) {
+								v.emplace_back(0);
 								v.emplace_back(nullptr);
-								v.emplace_back(t1.cols[i].name);
+								v.emplace_back(nullptr);
+								v.emplace_back(nullptr);
 
 								local_res.push_back(v);
+							} else {
+								for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+									const auto& v1 = t1.cols[i];
 
-								v.resize(pk_columns + 1);
+									v.emplace_back(i + 1);
+
+									if (v1.is_null)
+										v.emplace_back(nullptr);
+									else
+										v.emplace_back(v1);
+
+									v.emplace_back(nullptr);
+									v.emplace_back(t1.cols[i].name);
+
+									local_res.push_back(v);
+
+									v.resize(pk_columns + 1);
+								}
 							}
 						} else {
 							const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
@@ -873,22 +882,31 @@ static void do_compare(unsigned int num) {
 
 							v.emplace_back("added");
 
-							for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-								const auto& v2 = t2.cols[i];
-
-								v.emplace_back(i + 1);
+							if (pk_columns == t2.cols.size()) {
+								v.emplace_back(0);
+								v.emplace_back(nullptr);
+								v.emplace_back(nullptr);
 								v.emplace_back(nullptr);
 
-								if (v2.is_null)
-									v.emplace_back(nullptr);
-								else
-									v.emplace_back(v2);
-
-								v.emplace_back(t2.cols[i].name);
-
 								local_res.push_back(v);
+							} else {
+								for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+									const auto& v2 = t2.cols[i];
 
-								v.resize(pk_columns + 1);
+									v.emplace_back(i + 1);
+									v.emplace_back(nullptr);
+
+									if (v2.is_null)
+										v.emplace_back(nullptr);
+									else
+										v.emplace_back(v2);
+
+									v.emplace_back(t2.cols[i].name);
+
+									local_res.push_back(v);
+
+									v.resize(pk_columns + 1);
+								}
 							}
 						} else {
 							const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
@@ -926,22 +944,31 @@ static void do_compare(unsigned int num) {
 
 						v.emplace_back("removed");
 
-						for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-							const auto& v1 = t1.cols[i];
-
-							v.emplace_back(i + 1);
-
-							if (v1.is_null)
-								v.emplace_back(nullptr);
-							else
-								v.emplace_back(v1);
-
+						if (pk_columns == t1.cols.size()) {
+							v.emplace_back(0);
 							v.emplace_back(nullptr);
-							v.emplace_back(t1.cols[i].name);
+							v.emplace_back(nullptr);
+							v.emplace_back(nullptr);
 
 							local_res.push_back(v);
+						} else {
+							for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+								const auto& v1 = t1.cols[i];
 
-							v.resize(pk_columns + 1);
+								v.emplace_back(i + 1);
+
+								if (v1.is_null)
+									v.emplace_back(nullptr);
+								else
+									v.emplace_back(v1);
+
+								v.emplace_back(nullptr);
+								v.emplace_back(t1.cols[i].name);
+
+								local_res.push_back(v);
+
+								v.resize(pk_columns + 1);
+							}
 						}
 					} else {
 						const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t1.cols, pk_columns);
@@ -978,22 +1005,31 @@ static void do_compare(unsigned int num) {
 
 						v.emplace_back("added");
 
-						for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
-							const auto& v2 = t2.cols[i];
-
-							v.emplace_back(i + 1);
+						if (pk_columns == t2.cols.size()) {
+							v.emplace_back(0);
+							v.emplace_back(nullptr);
+							v.emplace_back(nullptr);
 							v.emplace_back(nullptr);
 
-							if (v2.is_null)
-								v.emplace_back(nullptr);
-							else
-								v.emplace_back(v2);
-
-							v.emplace_back(t2.cols[i].name);
-
 							local_res.push_back(v);
+						} else {
+							for (unsigned int i = pk_columns; i < t1.cols.size(); i++) {
+								const auto& v2 = t2.cols[i];
 
-							v.resize(pk_columns + 1);
+								v.emplace_back(i + 1);
+								v.emplace_back(nullptr);
+
+								if (v2.is_null)
+									v.emplace_back(nullptr);
+								else
+									v.emplace_back(v2);
+
+								v.emplace_back(t2.cols[i].name);
+
+								local_res.push_back(v);
+
+								v.resize(pk_columns + 1);
+							}
 						}
 					} else {
 						const auto& pk = pk_columns == 0 ? pseudo_pk(rownum) : make_pk_string(t2.cols, pk_columns);
