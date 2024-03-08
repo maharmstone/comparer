@@ -651,48 +651,27 @@ static void do_compare(unsigned int num) {
 	string server1, server2;
 	unsigned int pk_columns;
 	vector<pk_col> pk;
-	u16string results_table;
+	u16string results_table, tbl1, tbl2;
 	bool pk_only = false;
 
 	{
-		optional<tds::query> sq2(in_place, tds, tds::no_check{u"SELECT type, query1, query2, table1, table2 FROM Comparer.queries WHERE id = ?"}, num);
-
-		auto& sq = sq2.value();
+		tds::query sq(tds, u"SELECT table1, table2 FROM Comparer.queries WHERE id = ?", num);
 
 		if (!sq.fetch_row())
 			throw runtime_error("Unable to find entry in Comparer.queries");
 
-		auto type = (string)sq[0];
+		if (sq[0].is_null)
+			throw runtime_error("table1 is NULL");
 
-		if (type == "query") {
-			if (sq[1].is_null)
-				throw runtime_error("query1 is NULL");
+		if (sq[1].is_null)
+			throw runtime_error("table2 is NULL");
 
-			if (sq[2].is_null)
-				throw runtime_error("query2 is NULL");
-
-			q1 = (u16string)sq[1];
-			q2 = (u16string)sq[2];
-			server1 = server2 = db_server;
-
-			pk_columns = 1;
-		} else if (type == "table") {
-			if (sq[3].is_null)
-				throw runtime_error("table1 is NULL");
-
-			if (sq[4].is_null)
-				throw runtime_error("table2 is NULL");
-
-			auto tbl1 = (u16string)sq[3];
-			auto tbl2 = (u16string)sq[4];
-
-			sq2.reset();
-
-			create_queries(tds, tbl1, tbl2, q1, q2, server1, server2, pk_columns,
-						   pk, pk_only);
-		} else
-			throw formatted_error("Unsupported type {}.", type);
+		tbl1 = (u16string)sq[0];
+		tbl2 = (u16string)sq[1];
 	}
+
+	create_queries(tds, tbl1, tbl2, q1, q2, server1, server2, pk_columns,
+				   pk, pk_only);
 
 	repartition_results_table(tds, num);
 
