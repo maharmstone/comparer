@@ -136,8 +136,8 @@ static void create_results_table(tds::tds& tds, const vector<pk_col>& pk,
 								 unsigned int num, u16string& results_table,
 								 bool pk_only) {
 	u16string q;
+	bool do_unique_key = false;
 
-	// FIXME - unique used as primary key
 	// FIXME - name collisions
 
 	results_table = u"Comparer.results" + to_u16string(num);
@@ -147,7 +147,12 @@ static void create_results_table(tds::tds& tds, const vector<pk_col>& pk,
 	for (const auto& p : pk) {
 		q += tds::escape(p.name) + u" ";
 		q += p.type;
-		q += u" NOT NULL,\n";
+		q += u" ";
+		q += p.nullable ? u"NULL" : u"NOT NULL";
+		q += u",\n";
+
+		if (p.nullable)
+			do_unique_key = true;
 	}
 
 	q += u"change VARCHAR(10) NOT NULL,\n";
@@ -159,7 +164,10 @@ static void create_results_table(tds::tds& tds, const vector<pk_col>& pk,
 		q += u"value2 VARCHAR(MAX) NULL,\n";
 	}
 
-	q += u"PRIMARY KEY (";
+	if (do_unique_key)
+		q += u"INDEX idx UNIQUE (";
+	else
+		q += u"PRIMARY KEY (";
 
 	bool first = true;
 
@@ -286,17 +294,25 @@ ORDER BY index_columns.index_column_id)"}, object_id);
 
 				auto type = type_to_string((u16string)sq[2], (int)sq[3], (int)sq[4], (int)sq[5]);
 
-				pk.emplace_back((u16string)sq[0], type, (unsigned int)sq[6] != 0);
+				pk.emplace_back((u16string)sq[0], type, (unsigned int)sq[6] != 0, false);
 
 				pk_columns++;
 			}
 		}
 
 		if (!index_id.has_value()) { // if no primary key, look for unique key
-			tds::query sq(t, tds::no_check{uR"(SELECT columns.name, indexes.index_id
+			tds::query sq(t, tds::no_check{uR"(SELECT columns.name,
+	indexes.index_id,
+	CASE WHEN types.is_user_defined = 0 THEN UPPER(types.name) ELSE types.name END,
+	columns.max_length,
+	columns.precision,
+	columns.scale,
+	index_columns.is_descending_key,
+	columns.is_nullable
 FROM )" + prefix + uR"(sys.indexes
 JOIN )" + prefix + uR"(sys.index_columns ON index_columns.object_id = indexes.object_id AND index_columns.index_id = indexes.index_id
 JOIN )" + prefix + uR"(sys.columns ON columns.object_id = indexes.object_id AND columns.column_id = index_columns.column_id
+JOIN )" + prefix + uR"(sys.types ON types.user_type_id = columns.user_type_id
 WHERE indexes.object_id = ? AND indexes.index_id = (
 	SELECT MIN(index_id)
 	FROM )" + prefix + uR"(sys.indexes
@@ -310,6 +326,12 @@ ORDER BY index_columns.index_column_id)"}, object_id, object_id);
 					index_id = (int32_t)sq[1];
 
 				cols.emplace_back(tds::escape((u16string)sq[0]));
+
+				auto type = type_to_string((u16string)sq[2], (int)sq[3], (int)sq[4], (int)sq[5]);
+
+				pk.emplace_back((u16string)sq[0], type, (unsigned int)sq[6] != 0,
+								(unsigned int)sq[7] != 0);
+
 				pk_columns++;
 			}
 		}
