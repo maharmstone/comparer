@@ -41,6 +41,7 @@ else()
 	add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 
     target_link_options(comparer PUBLIC /MANIFEST:NO)
+    install(FILES $<TARGET_PDB_FILE:comparer> DESTINATION bin OPTIONAL)
 endif()
 
 install(TARGETS comparer
