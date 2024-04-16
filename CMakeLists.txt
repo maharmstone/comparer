@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(comparer)
+project(comparer
+	LANGUAGES CXX)
+
+include(GNUInstallDirs)
 
 if(MSVC AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.21)
     set(CMAKE_CXX_STANDARD 23) # /std:c++latest
@@ -39,3 +42,9 @@ else()
 
     target_link_options(comparer PUBLIC /MANIFEST:NO)
 endif()
+
+install(TARGETS comparer
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+)
